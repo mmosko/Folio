@@ -27,7 +27,7 @@
 #include <LongBow/runtime.h>
 #include <LongBow/longBow_Backtrace.h>
 
-#include "folio_DebugProvider.h"
+#include <Folio/folio_DebugProvider.h>
 
 #include <stdbool.h>
 #include <stdint.h>

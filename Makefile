@@ -1,6 +1,7 @@
 .PHONY: all lib builddir longbow clean test check coverage install remove
 
-export PREFIX=/home/marc/foo
+# You can override this on the command-line: `make PREFIX=/tmp/folio intall`
+export PREFIX=/usr/local
 
 SHELL = /bin/sh
 CC    = gcc
@@ -35,7 +36,7 @@ clean: lib_clean examples_clean test_clean coverage_clean
 ###########
 # Library setup
 
-lib : $(info $$TOPDIR is [${TOPDIR}]) builddir longbow
+lib : builddir longbow
 	$(MAKE) -C src all
 
 lib_clean:

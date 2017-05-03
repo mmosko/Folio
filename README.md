@@ -16,9 +16,19 @@ More examples coming.  Right now, folio_LinkedList.c is the best
 example of using the allocator, and the unit tests.
 
 ## Building
-Just `make`.
+
+The install prefix is defined in the top-level Makefile as PREFIX.  You
+should update this as desired or orverride it on the command line.
+
+Just `make`. 
 
 At some point in the future, we'll switch to autoconf or cmake.
+
+## Installing
+Either edit the Makefile to udpate PREFIX or use the command line:
+
+- make install
+- make PREFIX=/tmp/folio install
 
 ## Dependencies
 - LongBow [2]

@@ -25,8 +25,8 @@
  */
 
 #include <LongBow/runtime.h>
-#include "Folio/folio.h"
-#include "Folio/folio_LinkedList.h"
+#include <Folio/folio.h>
+#include <Folio/folio_LinkedList.h>
 
 #include <stdio.h>
 #include <stdlib.h>

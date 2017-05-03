@@ -47,4 +47,6 @@ install: lib
 	install -d $(PREFIX) $(PREFIX)/include/Folio $(PREFIX)/lib
 	install -p -t $(PREFIX)/include/Folio $(INCLUDEDIR)/Folio/*.h
 	install -p -t $(PREFIX)/lib $(BUILDDIR)/$(STATIC) $(BUILDDIR)/$(TARGET_VER)
+	ln -fs $(TARGET_VER) $(PREFIX)/lib/$(TARGET_MAJ)
+	ln -fs $(TARGET_MAJ) $(PREFIX)/lib/$(TARGET)
 	

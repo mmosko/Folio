@@ -16,7 +16,7 @@ LIBS	= -L$(BUILDABSDIR) -L$(LONGBOW_DIR)/lib -lpthread -lfolio -llongbow -llongb
 SRC = $(wildcard *.c)
 EXE = $(addprefix $(BUILDDIR)/,$(basename $(SRC)))
 
-$(EXE) : $(BUILDDIR)/test_% : test_%.c $(SOURCEDIR)/%.c $(INCLUDEDIR)/%.h
+$(EXE) : $(BUILDDIR)/test_% : test_%.c $(SOURCEDIR)/%.c $(INCLUDEDIR)/Folio/%.h
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LIBS)
 
 test: $(info $$EXE is [$(EXE)]) $(EXE)

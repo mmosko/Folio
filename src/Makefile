@@ -49,4 +49,9 @@ install: lib
 	install -p -t $(PREFIX)/lib $(BUILDDIR)/$(STATIC) $(BUILDDIR)/$(TARGET_VER)
 	ln -fs $(TARGET_VER) $(PREFIX)/lib/$(TARGET_MAJ)
 	ln -fs $(TARGET_MAJ) $(PREFIX)/lib/$(TARGET)
+
+remove:
+	rm -rf $(PREFIX)/include/Folio
+	rm -f $(PREFIX)/lib/libfolio.a $(PREFIX)/lib/libfolio.so*
+
 	

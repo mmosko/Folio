@@ -1,0 +1,7 @@
+*.so*
+build
+*.o
+*.gcno
+*.gcda
+coverage/
+

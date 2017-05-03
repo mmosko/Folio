@@ -24,91 +24,32 @@
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LongBow/runtime.h>
-#include "Folio/folio.h"
-#include "Folio/folio_StdProvider.h"
-#include <stdarg.h>
+#ifndef FOLIO_DEBUGPROVIDER_H
+#define FOLIO_DEBUGPROVIDER_H
 
-static FolioMemoryProvider const *_allocator = &FolioStdProvider;
+#include <stdio.h>
+#include "folio.h"
 
-void
-folio_SetAllocator(FolioMemoryProvider *allocator)
-{
-	_allocator = allocator;
-}
+/**
+ * Debug memory allocator.  All the features of the standard allocator
+ * and tracks each acquire with a backtrace.
+ */
+extern FolioMemoryProvider FolioDebugProvider;
 
-const
-FolioMemoryProvider *folio_GetAllocator(void)
-{
-	return _allocator;
-}
+/**
+ * Display the backtrace for a specific memory allocation
+ */
+void folioDebugProvider_Backtrace(const void *memory, FILE *stream);
 
-void *
-folio_Allocate(size_t length)
-{
-	return _allocator->allocate(length);
-}
+/**
+ * Display all backtraces
+ */
+void folioDebugProvider_DumpBacktraces(FILE *stream);
 
-void *
-folio_AllocateAndZero(size_t length)
-{
-	return _allocator->allocateAndZero(length);
-}
+/**
+ * Validates every allocation in the backtrace list.  This will be slow,
+ * do not do it if you do not need to.
+ */
+void folioDebugProvider_ValidateAll(void);
 
-void
-folio_SetFinalizer(void *memory, Finalizer fini)
-{
-	_allocator->setFinalizer(memory, fini);
-}
-
-void *
-folio_Acquire(const void *memory)
-{
-	return _allocator->acquire(memory);
-}
-
-void
-folio_Release(void **memoryPtr)
-{
-	_allocator->release(memoryPtr);
-}
-
-size_t
-folio_Length(const void *memory) {
-	return _allocator->length(memory);
-}
-
-void
-folio_Report(FILE *stream)
-{
-	_allocator->report(stream);
-}
-
-size_t
-folio_OustandingReferences(void)
-{
-	return _allocator->acquireCount();
-}
-
-size_t
-folio_AllocatedBytes(void)
-{
-	return _allocator->allocationSize();
-}
-
-
-bool
-folio_TestRefCount(size_t expectedRefCount, FILE *stream, const char *format, ...)
-{
-	bool result = true;
-	if (folio_OustandingReferences() != expectedRefCount) {
-		va_list va;
-		va_start(va, format);
-
-		vfprintf(stream, format, va);
-		va_end(va);
-		result = false;
-	}
-	return result;
-}
-
+#endif /* FOLIO_DEBUGPROVIDER_H */

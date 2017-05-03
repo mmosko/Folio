@@ -24,91 +24,42 @@
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LongBow/runtime.h>
-#include "Folio/folio.h"
-#include "Folio/folio_StdProvider.h"
-#include <stdarg.h>
+#ifndef FOLIO_LINKEDLIST_H
+#define FOLIO_LINKEDLIST_H
 
-static FolioMemoryProvider const *_allocator = &FolioStdProvider;
+typedef struct folio_linkedlist FolioLinkedList;
 
-void
-folio_SetAllocator(FolioMemoryProvider *allocator)
-{
-	_allocator = allocator;
-}
+#include <stdio.h>
+#include <stdbool.h>
 
-const
-FolioMemoryProvider *folio_GetAllocator(void)
-{
-	return _allocator;
-}
+#include "folio.h"
 
-void *
-folio_Allocate(size_t length)
-{
-	return _allocator->allocate(length);
-}
+/**
+ * A linked list of Memory objects.  The elements of the
+ * list must be created via memory_Allocate() (or memory_AllocateAndZero()).
+ */
+FolioLinkedList * folioLinkedList_Create(void);
 
-void *
-folio_AllocateAndZero(size_t length)
-{
-	return _allocator->allocateAndZero(length);
-}
+FolioLinkedList * folioLinkedList_Acquire(const FolioLinkedList *list);
 
-void
-folio_SetFinalizer(void *memory, Finalizer fini)
-{
-	_allocator->setFinalizer(memory, fini);
-}
+void folioLinkedList_Release(FolioLinkedList **listPtr);
 
-void *
-folio_Acquire(const void *memory)
-{
-	return _allocator->acquire(memory);
-}
+/**
+ * Stores a reference to the memory on the list.  The caller still owns their reference
+ * to the memory.
+ */
+void folioLinkedList_Append(FolioLinkedList *list, const void *data);
 
-void
-folio_Release(void **memoryPtr)
-{
-	_allocator->release(memoryPtr);
-}
+/**
+ * Returns the head of the list and removes it.
+ *
+ * @return null if list empty
+ * @return non-null The head of the list
+ */
+void * folioLinkedList_Remove(FolioLinkedList *list);
 
-size_t
-folio_Length(const void *memory) {
-	return _allocator->length(memory);
-}
+bool folioLinkedList_IsEmpty(const FolioLinkedList *list);
 
-void
-folio_Report(FILE *stream)
-{
-	_allocator->report(stream);
-}
+void folioLinkedList_Display(const FolioLinkedList *list, FILE *stream);
 
-size_t
-folio_OustandingReferences(void)
-{
-	return _allocator->acquireCount();
-}
-
-size_t
-folio_AllocatedBytes(void)
-{
-	return _allocator->allocationSize();
-}
-
-
-bool
-folio_TestRefCount(size_t expectedRefCount, FILE *stream, const char *format, ...)
-{
-	bool result = true;
-	if (folio_OustandingReferences() != expectedRefCount) {
-		va_list va;
-		va_start(va, format);
-
-		vfprintf(stream, format, va);
-		va_end(va);
-		result = false;
-	}
-	return result;
-}
-
+#endif /* FOLIO_LINKEDLIST_H */

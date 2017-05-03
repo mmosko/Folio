@@ -22,12 +22,12 @@ LDFLAGS      =
 LIBS         = -L$(BUILDDIR) -llongbow -llongbow-ansiterm
  
 SRC = $(wildcard *.c)
-HDR = $(wildcard $(INCLUDEDIR)/*.h)
+HDR = $(wildcard $(INCLUDEDIR)/Folio/*.h)
 OBJ = $(addprefix $(BUILDDIR)/,$(SRC:.c=.o))
 
 lib: $(BUILDDIR)/$(TARGET) $(BUILDDIR)/$(STATIC)
 
-$(OBJ): $(BUILDDIR)/%.o : %.c $(INCLUDEDIR)/%.h
+$(OBJ): $(BUILDDIR)/%.o : %.c $(INCLUDEDIR)/Folio/%.h
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILDDIR)/$(TARGET): $(BUILDDIR)/$(TARGET_VER)
@@ -43,4 +43,8 @@ $(BUILDDIR)/$(STATIC): $(OBJ)
 clean:
 	$(RM) -rf ${OBJ} $(BUILDDIR)/$(TARGET)* $(BUILDDIR)/$(STATIC)
 
-
+install: lib
+	install -d $(PREFIX) $(PREFIX)/include/Folio $(PREFIX)/lib
+	install -p -t $(PREFIX)/include/Folio $(INCLUDEDIR)/Folio/*.h
+	install -p -t $(PREFIX)/lib $(BUILDDIR)/$(STATIC) $(BUILDDIR)/$(TARGET_VER)
+	

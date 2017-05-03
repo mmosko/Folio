@@ -1,8 +1,5 @@
 .PHONY: all clean test check
 
-SHELL = /bin/sh
-CC    = gcc
-
 all: test
 
 #####
@@ -31,6 +28,6 @@ clean:
 # execute tests
 # You need to use liblongbow-tap for this to work
 
-check: $(EXE)
+check: $(info $$EXE = [$(EXE)]) $(EXE)
 	prove --ignore-exit $^ 2> /dev/null
 

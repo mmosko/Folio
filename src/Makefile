@@ -41,6 +41,6 @@ $(BUILDDIR)/$(STATIC): $(OBJ)
 	$(AR) rcs $@ $^
 
 clean:
-	$(RM) -rf ${OBJ} $(BUILDDIR)/$(TARGET)*
+	$(RM) -rf ${OBJ} $(BUILDDIR)/$(TARGET)* $(BUILDDIR)/$(STATIC)
 
 

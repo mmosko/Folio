@@ -11,6 +11,7 @@ export BUILDABSDIR := $(TOPDIR)/build
 export BUILDDIR := ../build
 export SOURCEDIR := ../src
 export INCLUDEDIR := ../include
+export TESTDIR := ../test
 export COVERDIR := $(TOPDIR)/coverage
 
 # The root directory holding lib/liblongBow* and include/LongBow
@@ -59,22 +60,17 @@ test: lib
 test_clean:
 	$(MAKE) -C test clean
 
-
 check: test
-	prove --ignore-exit build/test_* 2> /dev/null
+	$(MAKE) -C test check
 
-# Remove the verbose coverage files, but leaves $(COVERDIR).  That is only cleaned by "clean" target.
+#####
+# coverage testing
+# coverage will make a separate build into coverage/ with the --coverage flag defined
+# It will not affect the build/ directory
+
 coverage_clean:
-	rm -f *.gcno *.gcda folio_test.info
+	$(MAKE) -C coverage clean
 
 coverage:
-	lcov --base-directory . --directory . --zerocounters -q
-	${MAKE} COVER_FLAG="--coverage" clean check
-	lcov --base-directory . --directory . -c -o folio_test.info
-	lcov --remove folio_test.info "/usr*" -o folio_test.info
-	rm -rf $(COVERDIR)
-	genhtml -o $(COVERDIR) -t "folio test coverage" --num-spaces 4 folio_test.info
-	gcovr -d -r . -e '^test\/' -C -o $(COVERDIR)/report.txt
-	cat $(COVERDIR)/report.txt
-	${MAKE} coverage_clean test_clean
+	$(MAKE) -C coverage coverage
 

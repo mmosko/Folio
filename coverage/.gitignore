@@ -3,4 +3,5 @@ test_*
 *.o
 *.so*
 *.a
-
+folio_test.info
+report.txt

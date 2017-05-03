@@ -7,10 +7,10 @@ REPORTDIR := html
 
 clean: remove_gcov_files
 	$(MAKE) -C $(TOPDIR) BUILDDIR=$(TOPDIR)/coverage lib_clean test_clean
-	rm -rf $(REPORTDIR)
+	rm -rf $(REPORTDIR) folio_test.info report.txt
 
 remove_gcov_files:
-	rm -f $(TESTDIR)/*.gcno $(TESTDIR)/*.gcda $(TESTDIR)/*.gcov folio_test.info report.txt
+	rm -f $(TESTDIR)/*.gcno $(TESTDIR)/*.gcda $(TESTDIR)/*.gcov
 
 zerocounter: 
 	lcov --base-directory . --directory $(TESTDIR) --zerocounters -q
@@ -21,12 +21,14 @@ build: zerocounter
 gcov:
 	(cd $(TESTDIR); \
 		gcov -s $(SOURCEDIR) *.gcno; \
-		gcovr -r . -g -o $(COVERDIR)/report.txt \
+		gcovr -r . -g -e '^test_' -o $(COVERDIR)/report.txt \
 	)
+	cat report.txt
 
 coverage: build
 	lcov --directory $(TESTDIR) -c -o folio_test.info
 	lcov --remove folio_test.info "/usr*" -o folio_test.info
 	genhtml -o $(REPORTDIR) -t "folio test coverage" --num-spaces 4 folio_test.info
 	$(MAKE) gcov
+	$(MAKE) remove_gcov_files
 

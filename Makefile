@@ -3,15 +3,20 @@
 SHELL = /bin/sh
 CC    = gcc
 
-all: lib examples test
-
 ###########
 # Directory names
 
-TOPDIR := `pwd`
-export BUILDDIR := $(TOPDIR)/build
-export INCLUDEDIR := $(TOPDIR)/include
+export TOPDIR:=$(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
+export BUILDABSDIR := $(TOPDIR)/build
+export BUILDDIR := ../build
+export SOURCEDIR := ../src
+export INCLUDEDIR := ../include
 export COVERDIR := $(TOPDIR)/coverage
+
+# The root directory holding lib/liblongBow* and include/LongBow
+export LONGBOW_DIR := /usr/local
+
+all: lib examples test
 
 ###########
 # Make sure we can find longbow
@@ -27,11 +32,11 @@ clean: lib_clean examples_clean test_clean coverage_clean
 ###########
 # Library setup
 
-lib : builddir longbow
-	$(MAKE) -p src all
+lib : $(info $$TOPDIR is [${TOPDIR}]) builddir longbow
+	$(MAKE) -C src all
 
 lib_clean:
-	$(MAKE) -p src clean
+	$(MAKE) -C src clean
 
 builddir:
 	mkdir -p $(BUILDDIR)
@@ -40,19 +45,19 @@ builddir:
 # Examples
 
 examples: lib
-	$(MAKE) -p examples all
+	$(MAKE) -C examples all
 
 examples_clean:
-	$(MAKE) -p examples clean
+	$(MAKE) -C examples clean
 
 #####
 # unit tests
 
 test: lib
-	$(MAKE) -p test all
+	$(MAKE) -C test all
 
 test_clean:
-	$(MAKE) -p test clean
+	$(MAKE) -C test clean
 
 
 check: test
@@ -69,7 +74,7 @@ coverage:
 	lcov --remove folio_test.info "/usr*" -o folio_test.info
 	rm -rf $(COVERDIR)
 	genhtml -o $(COVERDIR) -t "folio test coverage" --num-spaces 4 folio_test.info
-	gcovr -d -r . -e '^test\/' -p -o $(COVERDIR)/report.txt
+	gcovr -d -r . -e '^test\/' -C -o $(COVERDIR)/report.txt
 	cat $(COVERDIR)/report.txt
 	${MAKE} coverage_clean test_clean
 

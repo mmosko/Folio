@@ -1,5 +1,5 @@
 /*
- * test_memory_debugalloc.c
+ * test_folio_DebugProvider.c
  *
  *  Created on: May 1, 2017
  *      Author: marc
@@ -11,18 +11,18 @@
 
 #include "../src/folio_DebugProvider.c"
 
-LONGBOW_TEST_RUNNER(memory_debugalloc)
+LONGBOW_TEST_RUNNER(folio_DebugProvider)
 {
     LONGBOW_RUN_TEST_FIXTURE(Local);
     LONGBOW_RUN_TEST_FIXTURE(CorruptMemory);
 }
 
-LONGBOW_TEST_RUNNER_SETUP(memory_debugalloc)
+LONGBOW_TEST_RUNNER_SETUP(folio_DebugProvider)
 {
     return LONGBOW_STATUS_SUCCEEDED;
 }
 
-LONGBOW_TEST_RUNNER_TEARDOWN(memory_debugalloc)
+LONGBOW_TEST_RUNNER_TEARDOWN(folio_DebugProvider)
 {
     return LONGBOW_STATUS_SUCCEEDED;
 }
@@ -52,8 +52,8 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(Local)
 
 	int status = LONGBOW_STATUS_SUCCEEDED;
 
-	if (!memory_TestRefCount(0, stdout, "Memory leak in %s\n", longBowTestCase_GetFullName(testCase))) {
-		memory_Report(stdout);
+	if (!folio_TestRefCount(0, stdout, "Memory leak in %s\n", longBowTestCase_GetFullName(testCase))) {
+		folio_Report(stdout);
 		folioDebugProvider_DumpBacktraces(stdout);
 
 		status = LONGBOW_STATUS_MEMORYLEAK;
@@ -209,8 +209,8 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(CorruptMemory)
 	_decreaseCurrentAllocation(header->requestedLength);
 	free(header);
 
-	if (!memory_TestRefCount(0, stdout, "Memory leak in %s\n", longBowTestCase_GetFullName(testCase))) {
-		memory_Report(stdout);
+	if (!folio_TestRefCount(0, stdout, "Memory leak in %s\n", longBowTestCase_GetFullName(testCase))) {
+		folio_Report(stdout);
 		status = LONGBOW_STATUS_MEMORYLEAK;
 	}
 
@@ -241,7 +241,7 @@ LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, underrun, .event = &LongBowTrapUnexpect
 int
 main(int argc, char *argv[argc])
 {
-    LongBowRunner *testRunner = LONGBOW_TEST_RUNNER_CREATE(memory_debugalloc);
+    LongBowRunner *testRunner = LONGBOW_TEST_RUNNER_CREATE(folio_DebugProvider);
     int exitStatus = LONGBOW_TEST_MAIN(argc, argv, testRunner, NULL);
     longBowTestRunner_Destroy(&testRunner);
     exit(exitStatus);

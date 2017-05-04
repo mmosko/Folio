@@ -44,7 +44,7 @@ static void _validate(const void *memory);
 static size_t _acquireCount(void);
 static size_t _allocationSize(void);
 static void _setFinalizer(void *memory, Finalizer fini);
-
+static void _setAvailableMemory(size_t maximum);
 static int _referenceCount(const void *memory);
 
 FolioMemoryProvider FolioStdProvider = {
@@ -57,7 +57,8 @@ FolioMemoryProvider FolioStdProvider = {
 	.report = _report,
 	.validate = _validate,
 	.acquireCount = _acquireCount,
-	.allocationSize = _allocationSize
+	.allocationSize = _allocationSize,
+	.setAvailableMemory = _setAvailableMemory
 };
 
 // These are some random numbers
@@ -82,7 +83,8 @@ static _Stats _stats = {
 		.spinLock = ATOMIC_FLAG_INIT,  // clear state
 		.currentAllocation = 0,
 		.outstandingAllocs = 0,
-		.outstandingAcquires = 0
+		.outstandingAcquires = 0,
+		.outOfMemoryCount = 0
 };
 
 /*
@@ -107,12 +109,16 @@ _statsUnlock(void) {
 	atomic_flag_clear(&_stats.spinLock);
 }
 
+#if 0
 #define HEADER_BYTES ( \
 				__SIZEOF_LONG_LONG__ + \
 				__SIZEOF_SIZE_T__ + \
 				__SIZEOF_POINTER__ + \
-				__SIZEOF_INT__ + \
+				__SIZEOF_ATOMIC_INT__ + \
 				__SIZEOF_INT__)
+#endif
+
+#define HEADER_BYTES ( 8 + 8 + 8 + 8 + 4 )
 
 #define PAD_BYTES (32 - HEADER_BYTES)
 
@@ -146,6 +152,13 @@ _getHeader(const void *memory)
 	return (Header *) (memory - sizeof(Header));
 }
 
+static Trailer *
+_getTrailer(const Header *header)
+{
+	Trailer *tail = (Trailer *) (((uint8_t *) header) + sizeof(Header) + header->requestedLength);
+	return tail;
+}
+
 static void
 _validateMemoryLocation(const void *memory)
 {
@@ -166,13 +179,21 @@ _validateInternal(const Header *header)
 {
 	if (header->magic1 == _magic1 && header->magic2 == _magic2) {
 		int refcount = _referenceCount(header);
-		trapUnexpectedStateIf(refcount == 0, "Memory: refcount is zero");
+		if (refcount == 0) {
+			printf("\n\nHeader:\n");
+			longBowDebug_MemoryDump((const char *) header, sizeof(Header));
+			trapUnexpectedState("Memory: refcount is zero");
+		}
 
-		const Trailer *tail = (const Trailer *) (((const uint8_t *) header) + sizeof(Header) + header->requestedLength);
+		const Trailer *tail = _getTrailer(header);
 		if (tail->magic3 != _magic3) {
+			printf("\n\nTrailer:\n");
+			longBowDebug_MemoryDump((const char *) tail, sizeof(Trailer));
 			trapUnexpectedState("Memory: invalid trailer (memory overrun)");
 		}
 	} else {
+		printf("\n\nHeader:\n");
+		longBowDebug_MemoryDump((const char *) header, sizeof(Header));
 		trapUnexpectedState("Memory: invalid header (memory underrun)");
 	}
 }
@@ -228,16 +249,17 @@ _allocate(const size_t length)
 		size_t totalLength = sizeof(Header) + sizeof(Trailer) + length;
 		void *memory = malloc(totalLength);
 		Header *head = memory;
-		Trailer *tail = memory + sizeof(Header) + length;
 
 		head->magic1 = _magic1;
 		head->requestedLength = length;
 		head->referenceCount = ATOMIC_VAR_INIT(1);
 		head->fini = NULL;
 		head->magic2 = _magic2;
-		tail->magic3 = _magic3;
 
 		user = memory + sizeof(Header);
+
+		Trailer *tail = _getTrailer(head);
+		tail->magic3 = _magic3;
 	}
 
 	return user;
@@ -344,14 +366,20 @@ _release(void **memoryPtr)
 static void
 _report(FILE *stream)
 {
-	fprintf(stream, "\nMemoryStdAlloc: outstanding allocs %zu acquires %zu, currentAllocation %zu\n\n",
-			_stats.outstandingAllocs,
-			_stats.outstandingAcquires,
-			_stats.currentAllocation);
+	_Stats copy;
+
+	_statsLock();
+	memcpy(&copy, &_stats, sizeof(_Stats));
+	_statsUnlock();
+
+	fprintf(stream, "\nMemoryDebugAlloc: outstanding allocs %zu acquires %zu, currentAllocation %zu\n\n",
+			copy.outstandingAllocs,
+			copy.outstandingAcquires,
+			copy.currentAllocation);
 }
 
-void
-memoryStdAlloc_SetAvailableMemory(size_t availableMemory)
+static void
+_setAvailableMemory(size_t availableMemory)
 {
 	_maximumMemory = availableMemory;
 }
@@ -359,12 +387,18 @@ memoryStdAlloc_SetAvailableMemory(size_t availableMemory)
 static size_t
 _acquireCount(void)
 {
-	return _stats.outstandingAcquires;
+	_statsLock();
+	size_t count = _stats.outstandingAcquires;
+	_statsUnlock();
+	return count;
 }
 
 static size_t
 _allocationSize(void)
 {
-	return _stats.currentAllocation;
+	_statsLock();
+	size_t count = _stats.currentAllocation;
+	_statsUnlock();
+	return count;
 }
 

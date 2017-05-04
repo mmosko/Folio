@@ -37,6 +37,11 @@ folio_SetAllocator(FolioMemoryProvider *allocator)
 	_allocator = allocator;
 }
 
+void
+folio_SetAvailableMemory(size_t maximum) {
+	_allocator->setAvailableMemory(maximum);
+}
+
 const
 FolioMemoryProvider *folio_GetAllocator(void)
 {

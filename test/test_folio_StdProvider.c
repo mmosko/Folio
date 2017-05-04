@@ -65,7 +65,7 @@ LONGBOW_TEST_FIXTURE_SETUP(Local)
 LONGBOW_TEST_FIXTURE_TEARDOWN(Local)
 {
 	// In case any testCase sets this, always reset it in Setup
-	memoryStdAlloc_SetAvailableMemory(SIZE_MAX);
+	_setAvailableMemory(SIZE_MAX);
 
 	int status = LONGBOW_STATUS_SUCCEEDED;
 
@@ -109,9 +109,9 @@ LONGBOW_TEST_CASE(Local, _allocate_ZeroLength)
 	_release(&memory);
 }
 
-LONGBOW_TEST_CASE_EXPECTS(Local, _allocate_OutOfMemory)
+LONGBOW_TEST_CASE(Local, _allocate_OutOfMemory)
 {
-	memoryStdAlloc_SetAvailableMemory(64);
+	_setAvailableMemory(64);
 
 	const size_t allocSize = 128;
 

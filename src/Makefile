@@ -17,8 +17,8 @@ TARGET := lib$(NAME).so
 TARGET_MAJ := $(TARGET).$(MAJOR)
 TARGET_VER := $(TARGET).$(VERSION)
 
-CFLAGS       = -std=gnu11 -rdynamic -fPIC -g -O0 -Wall -Wextra -I$(INCLUDEDIR)
-LDFLAGS      = 
+CFLAGS       = -std=gnu11 -g -O0 -rdynamic -fPIC -Wall -Wextra -I$(INCLUDEDIR)
+LDFLAGS      = -rdynamic 
 LIBS         = -L$(BUILDDIR) -llongbow -llongbow-ansiterm
  
 SRC = $(wildcard *.c)
@@ -35,7 +35,7 @@ $(BUILDDIR)/$(TARGET): $(BUILDDIR)/$(TARGET_VER)
 	ln -fs $(TARGET_MAJ) $(BUILDDIR)/$(TARGET)
 
 $(BUILDDIR)/$(TARGET_VER): $(OBJ)
-	$(CC) -shared -Wl,-soname,$(TARGET_MAJ) $^ -o $@
+	$(CC) -shared $(LDFLAGS) -Wl,-soname,$(TARGET_MAJ) $^ -o $@
 
 $(BUILDDIR)/$(STATIC): $(OBJ)
 	$(AR) rcs $@ $^

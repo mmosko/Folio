@@ -34,6 +34,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <stdarg.h>
+#include <stdatomic.h>
 
 #define DEBUG_ALLOC_LIST 0
 
@@ -51,6 +52,7 @@ static void _validate(const void *memory);
 static size_t _acquireCount(void);
 static size_t _allocationSize(void);
 static void _setFinalizer(void *memory, Finalizer fini);
+static void _setAvailableMemory(size_t maximum);
 static void _memory_Display(const void *memory, FILE *stream);
 
 
@@ -69,7 +71,8 @@ FolioMemoryProvider FolioDebugProvider = {
 	.report = _report,
 	.validate = _validate,
 	.acquireCount = _acquireCount,
-	.allocationSize = _allocationSize
+	.allocationSize = _allocationSize,
+	.setAvailableMemory = _setAvailableMemory
 };
 
 // These are some random numbers
@@ -77,15 +80,48 @@ static const uint64_t _magic1 = 0x05fd095c69493bf8ULL;
 static const uint32_t _magic2 = 0xf2beea1b;
 static const uint64_t _magic3 = 0x05fd095c69493bf8ULL;
 
-typedef struct stats_ {
+typedef struct stats {
+	atomic_flag spinLock;
+
 	// The bytes allocated - bytes freed
 	size_t currentAllocation;
 
 	size_t outstandingAllocs;
 	size_t outstandingAcquires;
+
+	// number of allocations attempted but no memory available
+	size_t outOfMemoryCount;
 } _Stats;
 
-static _Stats _stats = { 0, 0, 0 };
+static _Stats _stats = {
+		.spinLock = ATOMIC_FLAG_INIT,  // clear state
+		.currentAllocation = 0,
+		.outstandingAllocs = 0,
+		.outstandingAcquires = 0,
+		.outOfMemoryCount = 0
+};
+
+/*
+ * blocks in a busy loop until we acquire the spinlock.
+ */
+static void
+_statsLock(void) {
+	bool prior;
+	do {
+		// set the spin lock to TRUE.
+		// We acquire the lock iff the prior value was FALSE
+		prior = atomic_flag_test_and_set(&_stats.spinLock);
+	} while (prior);
+}
+
+/*
+ * Clears the spinlock.
+ * precondition: you are holding the lock
+ */
+static void
+_statsUnlock(void) {
+	atomic_flag_clear(&_stats.spinLock);
+}
 
 /* ********************************************************************
  * Internal linked list for storing allocations
@@ -94,6 +130,8 @@ static _Stats _stats = { 0, 0, 0 };
  *
  * Doubly linked list.  This allows us to store a reference in the memory
  * allocation to it's location in the linked list and remove it in time O(1).
+ *
+ * We a pthreads mutex on this.  Could be improved later.
  */
 
 struct internal_entry_t {
@@ -103,6 +141,7 @@ struct internal_entry_t {
 };
 
 struct internal_list_t {
+	pthread_mutex_t lock;
 	InternalEntry *head;
 	InternalEntry *tail;
 };
@@ -237,13 +276,25 @@ _internalList_ForEach(InternalList *list, void (callback)(const void *memory, vo
 #endif
 }
 
+static void
+_internalList_Lock(InternalList *list)
+{
+	pthread_mutex_lock(&list->lock);
+}
+
+static void
+_internalList_Unlock(InternalList *list)
+{
+	pthread_mutex_unlock(&list->lock);
+}
+
 static InternalList _privateAllocList = {
+		.lock = PTHREAD_MUTEX_INITIALIZER,
 		.head = NULL,
 		.tail = NULL
 };
 
 static InternalList *_allocList = &_privateAllocList;
-static pthread_mutex_t _allocListLock = PTHREAD_MUTEX_INITIALIZER;
 
 /* ********************************************************************/
 
@@ -278,15 +329,13 @@ typedef struct header_t {
 	uint8_t  pad[PAD_BYTES];
 #endif
 
-	uint32_t refcount;
+	atomic_int referenceCount;
 	uint32_t magic2;
 } __attribute__ ((aligned)) Header;
 
 typedef struct trailer_t {
 	uint64_t magic3;
 } Trailer;
-
-
 
 static Header *
 _getHeader(const void *memory)
@@ -301,6 +350,13 @@ _getTrailer(const Header *header)
 	return tail;
 }
 
+static int
+_referenceCount(const void *memory)
+{
+	const Header *header = _getHeader(memory);
+	return atomic_load(&header->referenceCount);
+}
+
 static void
 _validateMemoryLocation(const void *memory)
 {
@@ -313,7 +369,8 @@ static void
 _validateInternal(const Header *header)
 {
 	if (header->magic1 == _magic1 && header->magic2 == _magic2) {
-		if (header->refcount == 0) {
+		int refcount = _referenceCount(header);
+		if (refcount == 0) {
 			printf("\n\nHeader:\n");
 			longBowDebug_MemoryDump((const char *) header, sizeof(Header));
 			trapUnexpectedState("Memory: refcount is zero");
@@ -350,57 +407,80 @@ _memory_Display(const void *memory, FILE *stream)
 			(void *) header->fini,
 			(void *) header->backtrace,
 			(void *) header->allocListEntry,
-			header->refcount,
+			_referenceCount(memory),
 			(void *) header,
 			(void *) _getTrailer(header)
 			);
 }
 
-static void
+/*
+ * precondition: you hold the stats lock
+ *
+ * @return true if allocation of length bytes is ok
+ * @return false if out of memory
+ */
+static bool
 _increaseCurrentAllocation(const size_t length)
 {
-	size_t newAllocation = _stats.currentAllocation + length;
+	bool memoryIsAvailable = false;
 
-	// Because it is unsigned, if the new value is less than _stats.currentAllocation we had overflow
-	trapOutOfMemoryIf(newAllocation < _stats.currentAllocation, "Allocation overflows bounds");
+	if (_maximumMemory >= _stats.currentAllocation) {
+		size_t remainingMemory = _maximumMemory - _stats.currentAllocation;
 
-	trapOutOfMemoryIf(_maximumMemory < newAllocation, "Allocation exceeds maximum memory");
-
-	_stats.currentAllocation = newAllocation;
+		if (length <= remainingMemory) {
+			memoryIsAvailable = true;
+			_stats.currentAllocation = _stats.currentAllocation + length;
+		}
+	}
+	return memoryIsAvailable;
 }
 
+/*
+ * precondition: you hold the stats lock
+ */
 static void
 _decreaseCurrentAllocation(const size_t length)
 {
-	trapUnexpectedStateIf(_stats.currentAllocation < length, "current allocation less than length");
+	trapIllegalValueIf(_stats.currentAllocation < length, "current allocation less than length");
 	_stats.currentAllocation -= length;
 }
 
 static void *
 _allocate(const size_t length)
 {
-	size_t totalLength = _calculateTotalAllocation(length);
-	void *memory = malloc(totalLength);
-	Header *head = memory;
-	void *user = memory + sizeof(Header);
+	void * user = NULL;
 
-	head->magic1 = _magic1;
-	head->requestedLength = length;
-	head->refcount = 1;
-	head->fini = NULL;
-	head->backtrace = longBowBacktrace_Create(_backtrace_depth, _backtrace_offset);
-	head->magic2 = _magic2;
+	_statsLock();
+	bool memoryIsAvailable = _increaseCurrentAllocation(length);
+	if (memoryIsAvailable) {
+		_stats.outstandingAcquires++;
+		_stats.outstandingAllocs++;
+	} else {
+		_stats.outOfMemoryCount++;
+	}
+	_statsUnlock();
 
-	Trailer *tail = _getTrailer(head);
-	tail->magic3 = _magic3;
+	if (memoryIsAvailable) {
+		size_t totalLength = sizeof(Header) + sizeof(Trailer) + length;
+		void *memory = malloc(totalLength);
+		Header *head = memory;
 
-	pthread_mutex_lock(&_allocListLock);
-	head->allocListEntry = _internalList_Append(_allocList, user);
-	pthread_mutex_unlock(&_allocListLock);
+		head->magic1 = _magic1;
+		head->requestedLength = length;
+		head->backtrace = longBowBacktrace_Create(_backtrace_depth, _backtrace_offset);
+		head->referenceCount = ATOMIC_VAR_INIT(1);
+		head->fini = NULL;
+		head->magic2 = _magic2;
 
-	_increaseCurrentAllocation(length);
-	_stats.outstandingAcquires++;
-	_stats.outstandingAllocs++;
+		user = memory + sizeof(Header);
+
+		Trailer *tail = _getTrailer(head);
+		tail->magic3 = _magic3;
+
+		_internalList_Lock(_allocList);
+		head->allocListEntry = _internalList_Append(_allocList, user);
+		_internalList_Unlock(_allocList);
+	}
 
 	return user;
 }
@@ -438,8 +518,17 @@ _acquire(const void *memory)
 
 	_validateInternal(header);
 
+	_statsLock();
 	_stats.outstandingAcquires++;
-	header->refcount++;
+	_statsUnlock();
+
+	// prior value must be greater than 0.  If it is not positive it means someone
+	// freed the memory during the time between _validateInternal and now.
+	int prior = atomic_fetch_add_explicit(&header->referenceCount, 1, memory_order_relaxed);
+	if (prior < 1) {
+		trapUnrecoverableState("The memory %p was freed during acquire", (void *) memory);
+	}
+
 	return (void *) memory;
 }
 
@@ -466,29 +555,35 @@ _release(void **memoryPtr)
 
 	_validateInternal(header);
 
-	header->refcount--;
+	int prior = atomic_fetch_sub(&header->referenceCount, 1);
+	trapIllegalValueIf(prior < 1, "Reference count was %d < 1 when trying to release", prior);
 
-	_stats.outstandingAcquires--;
-
-	if (header->refcount == 0) {
+	if (prior == 1) {
 		if (header->fini != NULL) {
 			header->fini(memory);
 		}
 
 		if (header->allocListEntry != NULL) {
-			pthread_mutex_lock(&_allocListLock);
+			_internalList_Lock(_allocList);
 			_internalList_RemoveAt(_allocList, header->allocListEntry);
-			pthread_mutex_unlock(&_allocListLock);
+			_internalList_Unlock(_allocList);
 		}
 
+		_statsLock();
 		_decreaseCurrentAllocation(header->requestedLength);
 		_stats.outstandingAllocs--;
+		_stats.outstandingAcquires--;
+		_statsUnlock();
 
 		longBowBacktrace_Destroy(&header->backtrace);
 
 		// wipe out the whole allocation so not useful anymore
 		memset(header, 1, _calculateTotalAllocation(header->requestedLength));
 		free(header);
+	} else {
+		_statsLock();
+		_stats.outstandingAcquires--;
+		_statsUnlock();
 	}
 
 	*memoryPtr = NULL;
@@ -497,14 +592,20 @@ _release(void **memoryPtr)
 static void
 _report(FILE *stream)
 {
+	_Stats copy;
+
+	_statsLock();
+	memcpy(&copy, &_stats, sizeof(_Stats));
+	_statsUnlock();
+
 	fprintf(stream, "\nMemoryDebugAlloc: outstanding allocs %zu acquires %zu, currentAllocation %zu\n\n",
-			_stats.outstandingAllocs,
-			_stats.outstandingAcquires,
-			_stats.currentAllocation);
+			copy.outstandingAllocs,
+			copy.outstandingAcquires,
+			copy.currentAllocation);
 }
 
-void
-memoryDebugAlloc_SetAvailableMemory(size_t availableMemory)
+static void
+_setAvailableMemory(size_t availableMemory)
 {
 	_maximumMemory = availableMemory;
 }
@@ -512,13 +613,19 @@ memoryDebugAlloc_SetAvailableMemory(size_t availableMemory)
 static size_t
 _acquireCount(void)
 {
-	return _stats.outstandingAcquires;
+	_statsLock();
+	size_t count = _stats.outstandingAcquires;
+	_statsUnlock();
+	return count;
 }
 
 static size_t
 _allocationSize(void)
 {
-	return _stats.currentAllocation;
+	_statsLock();
+	size_t count = _stats.currentAllocation;
+	_statsUnlock();
+	return count;
 }
 
 // This is a private function of longbow
@@ -548,9 +655,9 @@ folioDebugAlloc_Backtrace(const void *memory, FILE *stream)
 void
 folioDebugProvider_DumpBacktraces(FILE *stream)
 {
-	pthread_mutex_lock(&_allocListLock);
+	_internalList_Lock(_allocList);
 	_internalList_ForEach(_allocList, _internalBacktrace, stream);
-	pthread_mutex_unlock(&_allocListLock);
+	_internalList_Unlock(_allocList);
 }
 
 static void
@@ -562,8 +669,8 @@ _internalValidateCallback(const void *memory, __attribute__((unused)) void *dumm
 void
 folioDebugProvider_ValidateAll(void)
 {
-	pthread_mutex_lock(&_allocListLock);
+	_internalList_Lock(_allocList);
 	_internalList_ForEach(_allocList, _internalValidateCallback, NULL);
-	pthread_mutex_unlock(&_allocListLock);
+	_internalList_Unlock(_allocList);
 }
 

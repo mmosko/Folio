@@ -22,6 +22,19 @@ should update this as desired or orverride it on the command line.
 
 Just `make`. 
 
+To use the default PREFIX=/usr/local
+```
+make
+make check
+sudo make install
+```
+
+To override the prefix either edit the top-level Makefile or
+```
+make PREFIX=~/folio all check
+sudo make PREFIX=~/folio install
+```
+
 At some point in the future, we'll switch to autoconf or cmake.
 
 ## Installing

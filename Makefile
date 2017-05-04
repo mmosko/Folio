@@ -43,7 +43,7 @@ lib_clean:
 	$(MAKE) -C src clean
 
 builddir:
-	mkdir -p $(BUILDDIR)
+	mkdir -p $(notdir $(BUILDDIR))
 
 install remove:
 	$(MAKE) -C src $@

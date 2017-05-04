@@ -31,8 +31,7 @@ sudo make install
 
 To override the prefix either edit the top-level Makefile or
 ```
-make PREFIX=~/folio all check
-sudo make PREFIX=~/folio install
+make PREFIX=~/folio all check install
 ```
 
 At some point in the future, we'll switch to autoconf or cmake.

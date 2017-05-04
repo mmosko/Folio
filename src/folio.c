@@ -29,76 +29,76 @@
 #include "Folio/folio_StdProvider.h"
 #include <stdarg.h>
 
-static FolioMemoryProvider const *_allocator = &FolioStdProvider;
+static FolioMemoryProvider const *_provider = &FolioStdProvider;
 
 void
-folio_SetAllocator(FolioMemoryProvider *allocator)
+folio_SetProvider(FolioMemoryProvider *provider)
 {
-	_allocator = allocator;
+	_provider = provider;
 }
 
 void
 folio_SetAvailableMemory(size_t maximum) {
-	_allocator->setAvailableMemory(maximum);
+	_provider->setAvailableMemory(maximum);
 }
 
 const
 FolioMemoryProvider *folio_GetAllocator(void)
 {
-	return _allocator;
+	return _provider;
 }
 
 void *
 folio_Allocate(size_t length)
 {
-	return _allocator->allocate(length);
+	return _provider->allocate(length);
 }
 
 void *
 folio_AllocateAndZero(size_t length)
 {
-	return _allocator->allocateAndZero(length);
+	return _provider->allocateAndZero(length);
 }
 
 void
 folio_SetFinalizer(void *memory, Finalizer fini)
 {
-	_allocator->setFinalizer(memory, fini);
+	_provider->setFinalizer(memory, fini);
 }
 
 void *
 folio_Acquire(const void *memory)
 {
-	return _allocator->acquire(memory);
+	return _provider->acquire(memory);
 }
 
 void
 folio_Release(void **memoryPtr)
 {
-	_allocator->release(memoryPtr);
+	_provider->release(memoryPtr);
 }
 
 size_t
 folio_Length(const void *memory) {
-	return _allocator->length(memory);
+	return _provider->length(memory);
 }
 
 void
 folio_Report(FILE *stream)
 {
-	_allocator->report(stream);
+	_provider->report(stream);
 }
 
 size_t
 folio_OustandingReferences(void)
 {
-	return _allocator->acquireCount();
+	return _provider->acquireCount();
 }
 
 size_t
 folio_AllocatedBytes(void)
 {
-	return _allocator->allocationSize();
+	return _provider->allocationSize();
 }
 
 

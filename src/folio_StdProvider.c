@@ -28,6 +28,8 @@
 #include <LongBow/runtime.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdatomic.h>
+
 #include <Folio/folio_StdProvider.h>
 
 static size_t _maximumMemory = SIZE_MAX;
@@ -42,6 +44,8 @@ static void _validate(const void *memory);
 static size_t _acquireCount(void);
 static size_t _allocationSize(void);
 static void _setFinalizer(void *memory, Finalizer fini);
+
+static int _referenceCount(const void *memory);
 
 FolioMemoryProvider FolioStdProvider = {
 	.allocate = _allocate,
@@ -62,14 +66,46 @@ static const uint32_t _magic2 = 0x2f059a66;
 static const uint64_t _magic3 = 0xd4d44a5c6b617c2cULL;
 
 typedef struct stats {
+	atomic_flag spinLock;
+
 	// The bytes allocated - bytes freed
 	size_t currentAllocation;
 
 	size_t outstandingAllocs;
 	size_t outstandingAcquires;
+
+	// number of allocations attempted but no memory available
+	size_t outOfMemoryCount;
 } _Stats;
 
-static _Stats _stats = { 0, 0, 0 };
+static _Stats _stats = {
+		.spinLock = ATOMIC_FLAG_INIT,  // clear state
+		.currentAllocation = 0,
+		.outstandingAllocs = 0,
+		.outstandingAcquires = 0
+};
+
+/*
+ * blocks in a busy loop until we acquire the spinlock.
+ */
+static void
+_statsLock(void) {
+	bool prior;
+	do {
+		// set the spin lock to TRUE.
+		// We acquire the lock iff the prior value was FALSE
+		prior = atomic_flag_test_and_set(&_stats.spinLock);
+	} while (prior);
+}
+
+/*
+ * Clears the spinlock.
+ * precondition: you are holding the lock
+ */
+static void
+_statsUnlock(void) {
+	atomic_flag_clear(&_stats.spinLock);
+}
 
 #define HEADER_BYTES ( \
 				__SIZEOF_LONG_LONG__ + \
@@ -96,7 +132,7 @@ typedef struct header_t {
 	uint8_t  pad[PAD_BYTES];
 #endif
 
-	uint32_t refcount;
+	atomic_int referenceCount;
 	uint32_t magic2;
 } __attribute__ ((aligned)) Header;
 
@@ -118,11 +154,19 @@ _validateMemoryLocation(const void *memory)
 	trapIllegalValueIf(memory < bottom, "Invalid memory location");
 }
 
+static int
+_referenceCount(const void *memory)
+{
+	const Header *header = _getHeader(memory);
+	return atomic_load(&header->referenceCount);
+}
+
 static void
 _validateInternal(const Header *header)
 {
 	if (header->magic1 == _magic1 && header->magic2 == _magic2) {
-		trapUnexpectedStateIf(header->refcount == 0, "Memory: refcount is zero");
+		int refcount = _referenceCount(header);
+		trapUnexpectedStateIf(refcount == 0, "Memory: refcount is zero");
 
 		const Trailer *tail = (const Trailer *) (((const uint8_t *) header) + sizeof(Header) + header->requestedLength);
 		if (tail->magic3 != _magic3) {
@@ -133,46 +177,68 @@ _validateInternal(const Header *header)
 	}
 }
 
-static void
+/*
+ * precondition: you hold the stats lock
+ *
+ * @return true if allocation of length bytes is ok
+ * @return false if out of memory
+ */
+static bool
 _increaseCurrentAllocation(const size_t length)
 {
-	size_t newAllocation = _stats.currentAllocation + length;
+	bool memoryIsAvailable = false;
 
-	// Because it is unsigned, if the new value is less than _stats.currentAllocation we had overflow
-	trapOutOfMemoryIf(newAllocation < _stats.currentAllocation, "Allocation overflows bounds");
+	if (_maximumMemory >= _stats.currentAllocation) {
+		size_t remainingMemory = _maximumMemory - _stats.currentAllocation;
 
-	trapOutOfMemoryIf(_maximumMemory < newAllocation, "Allocation exceeds maximum memory");
-
-	_stats.currentAllocation = newAllocation;
+		if (length <= remainingMemory) {
+			memoryIsAvailable = true;
+			_stats.currentAllocation = _stats.currentAllocation + length;
+		}
+	}
+	return memoryIsAvailable;
 }
 
+/*
+ * precondition: you hold the stats lock
+ */
 static void
 _decreaseCurrentAllocation(const size_t length)
 {
-	trapUnexpectedStateIf(_stats.currentAllocation < length, "current allocation less than length");
+	trapIllegalValueIf(_stats.currentAllocation < length, "current allocation less than length");
 	_stats.currentAllocation -= length;
 }
 
 static void *
 _allocate(const size_t length)
 {
-	_increaseCurrentAllocation(length);
+	void *user = NULL;
 
-	_stats.outstandingAcquires++;
-	_stats.outstandingAllocs++;
+	_statsLock();
+	bool memoryIsAvailable = _increaseCurrentAllocation(length);
+	if (memoryIsAvailable) {
+		_stats.outstandingAcquires++;
+		_stats.outstandingAllocs++;
+	} else {
+		_stats.outOfMemoryCount++;
+	}
+	_statsUnlock();
 
-	size_t totalLength = sizeof(Header) + sizeof(Trailer) + length;
-	void *memory = malloc(totalLength);
-	Header *head = memory;
-	void *user = memory + sizeof(Header);
-	Trailer *tail = memory + sizeof(Header) + length;
+	if (memoryIsAvailable) {
+		size_t totalLength = sizeof(Header) + sizeof(Trailer) + length;
+		void *memory = malloc(totalLength);
+		Header *head = memory;
+		Trailer *tail = memory + sizeof(Header) + length;
 
-	head->magic1 = _magic1;
-	head->requestedLength = length;
-	head->refcount = 1;
-	head->fini = NULL;
-	head->magic2 = _magic2;
-	tail->magic3 = _magic3;
+		head->magic1 = _magic1;
+		head->requestedLength = length;
+		head->referenceCount = ATOMIC_VAR_INIT(1);
+		head->fini = NULL;
+		head->magic2 = _magic2;
+		tail->magic3 = _magic3;
+
+		user = memory + sizeof(Header);
+	}
 
 	return user;
 }
@@ -181,7 +247,9 @@ static void *
 _allocateAndZero(const size_t length)
 {
 	void * memory = _allocate(length);
-	memset(memory, 0, length);
+	if (memory) {
+		memset(memory, 0, length);
+	}
 	return memory;
 }
 
@@ -210,8 +278,17 @@ _acquire(const void *memory)
 
 	_validateInternal(header);
 
+	// prior value must be greater than 0.  If it is not positive it means someone
+	// freed the memory during the time between _validateInternal and now.
+	int prior = atomic_fetch_add_explicit(&header->referenceCount, 1, memory_order_relaxed);
+	if (prior < 1) {
+		trapUnrecoverableState("The memory %p was freed during acquire", (void *) memory);
+	}
+
+	_statsLock();
 	_stats.outstandingAcquires++;
-	header->refcount++;
+	_statsUnlock();
+
 	return (void *) memory;
 }
 
@@ -238,19 +315,27 @@ _release(void **memoryPtr)
 
 	_validateInternal(header);
 
-	header->refcount--;
-	_stats.outstandingAcquires--;
+	int prior = atomic_fetch_sub(&header->referenceCount, 1);
+	trapIllegalValueIf(prior < 1, "Reference count was %d < 1 when trying to release", prior);
 
-	if (header->refcount == 0) {
+	if (prior == 1) {
 		if (header->fini != NULL) {
 			header->fini(memory);
 		}
 
+		_statsLock();
 		_decreaseCurrentAllocation(header->requestedLength);
-		// wipe out the header so it is no longer valid
-		memset(header, 0, sizeof(Header));
-		free(header);
+		_stats.outstandingAcquires--;
 		_stats.outstandingAllocs--;
+		_statsUnlock();
+
+		// Write over magic1 so it invalidates the block
+		memset(header, 0, sizeof(uint64_t));
+		free(header);
+	} else {
+		_statsLock();
+		_stats.outstandingAcquires--;
+		_statsUnlock();
 	}
 
 	*memoryPtr = NULL;

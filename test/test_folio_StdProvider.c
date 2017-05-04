@@ -109,14 +109,15 @@ LONGBOW_TEST_CASE(Local, _allocate_ZeroLength)
 	_release(&memory);
 }
 
-LONGBOW_TEST_CASE_EXPECTS(Local, _allocate_OutOfMemory, .event = &LongBowTrapOutOfMemoryEvent)
+LONGBOW_TEST_CASE_EXPECTS(Local, _allocate_OutOfMemory)
 {
 	memoryStdAlloc_SetAvailableMemory(64);
 
 	const size_t allocSize = 128;
 
 	// This will trap out of memory
-	_allocate(allocSize);
+	void * memory = _allocate(allocSize);
+	assertNull(memory, "memory should have been NULL due to out of memory");
 }
 
 

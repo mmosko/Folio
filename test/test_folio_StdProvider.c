@@ -79,6 +79,8 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(Local)
 
 LONGBOW_TEST_CASE(Local, _allocate)
 {
+	printf("sizeof Header %zu Trailer %zu\n", sizeof(Header), sizeof(Trailer));
+
 	const size_t allocSize = 9;
 	void *memory = _allocate(allocSize);
 	assertNotNull(memory, "Did not return memory pointer");
@@ -91,6 +93,7 @@ LONGBOW_TEST_CASE(Local, _allocate)
 
 	_validate(memory);
 	_release(&memory);
+
 }
 
 LONGBOW_TEST_CASE(Local, _allocate_ZeroLength)

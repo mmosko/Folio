@@ -27,63 +27,10 @@
 #ifndef FOLIO_H_
 #define FOLIO_H_
 
+#include <Folio/folio_MemoryProvider.h>
 #include <stdio.h>
 #include <stdbool.h>
 
-/**
- * The finalizer, if set, is called when the last reference to
- * the memory is released.
- */
-typedef void (*Finalizer)(void *memory);
-
-typedef struct folio_memory_provider {
-	void * (*allocate)(const size_t length);
-	void * (*allocateAndZero)(const size_t length);
-	void * (*acquire)(const void * memory);
-	size_t (*length)(const void *memory);
-	void (*setFinalizer)(void *memory, Finalizer fini);
-	void (*release)(void **memoryPtr);
-
-	/**
-	 * Report statistics about the allocator
-	 */
-	void (*report)(FILE *stream);
-
-	/**
-	 * Sanity checks on the allocated memory
-	 */
-	void (*validate)(const void *memory);
-
-	/**
-	 * The current number of outstanding Acquires
-	 */
-	size_t (*acquireCount)(void);
-
-	/**
-	 * The total bytes of memory requested by the current
-	 * allocations.  Not that multiple references to the same
-	 * memory do not increase this number.
-	 *
-	 * The allocation size is the amount of user memory requested.
-	 * Actual memory used will be approximately 40 bytes more per
-	 * allocation (not acquire).
-	 */
-	size_t (*allocationSize)(void);
-
-	/**
-	 * Set the maximum amount of user memory available to the allocator.
-	 *
-	 * Allocations beyond this value will result in a trapOutOfMemory().
-	 *
-	 * The allocator will use more physical memory than the value set because
-	 * there is some fixed overhead per allocation (40 bytes or so, depending
-	 * on how the compiler aligns structures and if using a 64-bit machine).
-	 *
-	 * You may set this at any time, though if set after some allocations
-	 * have taken place it will not trap until the next allocation.
-	 */
-	void (*setAvailableMemory)(size_t bytes);
-} FolioMemoryProvider;
 
 /**
  * Should be done once (and only once) at program startup.
@@ -91,6 +38,11 @@ typedef struct folio_memory_provider {
  * Defaults to FolioStdProvider if not otherwise set.
  */
 void folio_SetProvider(FolioMemoryProvider *provider);
+
+/**
+ * Sets the maximum amount of memory that can be allocated
+ */
+void folio_SetAvailableMemory(size_t maximum);
 
 /**
  * Returns the active allocator.

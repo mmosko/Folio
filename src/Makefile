@@ -21,7 +21,7 @@ CFLAGS       = -std=gnu11 -g -O0 -rdynamic -fPIC -Wall -Wextra -I$(INCLUDEDIR)
 LDFLAGS      = -rdynamic 
 LIBS         = -L$(BUILDDIR) -llongbow -llongbow-ansiterm
  
-SRC = $(wildcard *.c)
+SRC = $(wildcard *.c) $(wildcard private/*.c)
 HDR = $(wildcard $(INCLUDEDIR)/Folio/*.h)
 OBJ = $(addprefix $(BUILDDIR)/,$(SRC:.c=.o))
 

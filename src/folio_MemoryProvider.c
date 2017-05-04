@@ -25,88 +25,22 @@
  */
 
 #include <LongBow/runtime.h>
-#include "Folio/folio.h"
-#include "Folio/folio_StdProvider.h"
+#include <Folio/folio_MemoryProvider.h>
 #include <stdarg.h>
 
-static FolioMemoryProvider const *_provider = &FolioStdProvider;
 
-void
-folio_SetProvider(FolioMemoryProvider *provider)
-{
-	_provider = provider;
-}
-
-void
-folio_SetAvailableMemory(size_t maximum) {
-	folioMemoryProvider_SetAvailableMemory(_provider, maximum);
-}
-
-const
-FolioMemoryProvider *folio_GetAllocator(void)
-{
-	return _provider;
-}
-
-void *
-folio_Allocate(size_t length)
-{
-	return folioMemoryProvider_Allocate(_provider, length);
-}
-
-void *
-folio_AllocateAndZero(size_t length)
-{
-	return folioMemoryProvider_AllocateAndZero(_provider, length);
-}
-
-void
-folio_SetFinalizer(void *memory, Finalizer fini)
-{
-	folioMemoryProvider_SetFinalizer(_provider, memory, fini);
-}
-
-void *
-folio_Acquire(const void *memory)
-{
-	return folioMemoryProvider_Acquire(_provider, memory);
-}
-
-void
-folio_Release(void **memoryPtr)
-{
-	folioMemoryProvider_Release(_provider, memoryPtr);
-}
-
-size_t
-folio_Length(const void *memory) {
-	return folioMemoryProvider_Length(_provider, memory);
-}
-
-void
-folio_Report(FILE *stream)
-{
-	folioMemoryProvider_Report(_provider, stream);
-}
-
-size_t
-folio_OustandingReferences(void)
-{
-	return folioMemoryProvider_OustandingReferences(_provider);
-}
-
-size_t
-folio_AllocatedBytes(void)
-{
-	return folioMemoryProvider_AllocatedBytes(_provider);
-}
-
-
+/**
+ * Tests if the current number of Acquires is equal to the expected reference count.
+ * If it is not, the function will display the provided message and return false.
+ *
+ * @return true The current Acquire count is equal to the expected reference count
+ * @return false outstanding acquires not equal to execpted reference count
+ */
 bool
-folio_TestRefCount(size_t expectedRefCount, FILE *stream, const char *format, ...)
+folioMemoryProvider_TestRefCount(FolioMemoryProvider const *provider, size_t expectedRefCount, FILE *stream, const char *format, ...)
 {
 	bool result = true;
-	if (folio_OustandingReferences() != expectedRefCount) {
+	if (folioMemoryProvider_OustandingReferences(provider) != expectedRefCount) {
 		va_list va;
 		va_start(va, format);
 
@@ -116,4 +50,3 @@ folio_TestRefCount(size_t expectedRefCount, FILE *stream, const char *format, ..
 	}
 	return result;
 }
-

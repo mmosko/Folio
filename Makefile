@@ -44,6 +44,7 @@ lib_clean:
 
 builddir:
 	mkdir -p $(notdir $(BUILDDIR))
+	mkdir -p $(notdir $(BUILDDIR))/private
 
 install remove:
 	$(MAKE) -C src $@

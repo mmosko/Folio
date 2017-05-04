@@ -31,6 +31,7 @@
 #include <stdatomic.h>
 
 #include <Folio/folio_StdProvider.h>
+#include <Folio/private/folio_Lock.h>
 
 static size_t _maximumMemory = SIZE_MAX;
 
@@ -45,7 +46,9 @@ static size_t _acquireCount(void);
 static size_t _allocationSize(void);
 static void _setFinalizer(void *memory, Finalizer fini);
 static void _setAvailableMemory(size_t maximum);
-static int _referenceCount(const void *memory);
+
+static void _lock(void *memory);
+static void _unlock(void *memory);
 
 FolioMemoryProvider FolioStdProvider = {
 	.allocate = _allocate,
@@ -118,9 +121,9 @@ _statsUnlock(void) {
 				__SIZEOF_INT__)
 #endif
 
-#define HEADER_BYTES ( 8 + 8 + 8 + 8 + 4 )
+#define HEADER_BYTES ( 40 )
 
-#define PAD_BYTES (32 - HEADER_BYTES)
+#define PAD_BYTES (64 - HEADER_BYTES)
 
 typedef struct header_t {
 	// This structure should always be a multiple of 8 bytes to keep
@@ -132,13 +135,19 @@ typedef struct header_t {
 
 	Finalizer fini;
 
+	FolioLock *lock;
+
+	atomic_int referenceCount;
+
+	// TODO: Should restructure this to remove magic2 and make sure
+	// we have atleast 4 PAD_BYTES so we can fill those with a guard value.
+
 	// pad out to alignment size bytes
 	// This ensures that magic2 will be adjacent to the user space
 #if PAD_BYTES > 0
 	uint8_t  pad[PAD_BYTES];
 #endif
 
-	atomic_int referenceCount;
 	uint32_t magic2;
 } __attribute__ ((aligned)) Header;
 
@@ -168,9 +177,8 @@ _validateMemoryLocation(const void *memory)
 }
 
 static int
-_referenceCount(const void *memory)
+_referenceCount(const Header *header)
 {
-	const Header *header = _getHeader(memory);
 	return atomic_load(&header->referenceCount);
 }
 
@@ -401,4 +409,17 @@ _allocationSize(void)
 	_statsUnlock();
 	return count;
 }
+
+static void
+_lock(void *memory)
+{
+
+}
+
+static void
+_unlock(void *memory)
+{
+
+}
+
 

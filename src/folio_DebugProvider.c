@@ -28,6 +28,9 @@
 #include <LongBow/longBow_Backtrace.h>
 
 #include <Folio/folio_DebugProvider.h>
+#include <Folio/private/folio_InternalList.h>
+#include <Folio/private/folio_InternalProvider.h>
+#include <Folio/private/folio_Lock.h>
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -38,30 +41,25 @@
 
 #define DEBUG_ALLOC_LIST 0
 
-static size_t _maximumMemory = SIZE_MAX;
 static uint32_t _backtrace_depth = 10;
 static uint32_t _backtrace_offset = 2;
 
-static void * _allocate(const size_t length);
-static void * _allocateAndZero(const size_t length);
-static void * _acquire(const void *memory);
-static size_t _length(const void *memory);
-static void _release(void **memoryPtr);
-static void _report(FILE *stream);
-static void _validate(const void *memory);
-static size_t _acquireCount(void);
-static size_t _allocationSize(void);
-static void _setFinalizer(void *memory, Finalizer fini);
-static void _setAvailableMemory(size_t maximum);
-static void _memory_Display(const void *memory, FILE *stream);
+static void * _allocate(FolioMemoryProvider *provider, const size_t length);
+static void * _allocateAndZero(FolioMemoryProvider *provider, const size_t length);
+static void * _acquire(FolioMemoryProvider *provider, const void *memory);
+static size_t _length(const FolioMemoryProvider *provider, const void *memory);
+static void _release(FolioMemoryProvider *provider, void **memoryPtr);
+static void _report(const FolioMemoryProvider *provider, FILE *stream);
+static void _validate(const FolioMemoryProvider *provider, const void *memory);
+static size_t _acquireCount(const FolioMemoryProvider *provider);
+static size_t _allocationSize(const FolioMemoryProvider *provider);
+static void _setFinalizer(FolioMemoryProvider *provider, void *memory, Finalizer fini);
+static void _setAvailableMemory(FolioMemoryProvider *provider, size_t maximum);
 
+static void _lock(FolioMemoryProvider *provider, void *memory);
+static void _unlock(FolioMemoryProvider *provider, void *memory);
 
-typedef struct internal_entry_t InternalEntry;
-typedef struct internal_list_t InternalList;
-static void _internalEntry_Display(const InternalEntry *entry, FILE *stream, const char *tag) __attribute__((unused));
-static void _internalList_Display(const InternalList *list, FILE *stream, const char *tag) __attribute__((unused));
-
-FolioMemoryProvider FolioDebugProvider = {
+const FolioMemoryProvider FolioDebugProviderTemplate = {
 	.allocate = _allocate,
 	.allocateAndZero = _allocateAndZero,
 	.acquire = _acquire,
@@ -72,16 +70,13 @@ FolioMemoryProvider FolioDebugProvider = {
 	.validate = _validate,
 	.acquireCount = _acquireCount,
 	.allocationSize = _allocationSize,
-	.setAvailableMemory = _setAvailableMemory
+	.setAvailableMemory = _setAvailableMemory,
+	.lock = _lock,
+	.unlock = _unlock
 };
 
-// These are some random numbers
-static const uint64_t _magic1 = 0x05fd095c69493bf8ULL;
-static const uint32_t _magic2 = 0xf2beea1b;
-static const uint64_t _magic3 = 0x05fd095c69493bf8ULL;
-
 typedef struct stats {
-	atomic_flag spinLock;
+	atomic_flag lock;
 
 	// The bytes allocated - bytes freed
 	size_t currentAllocation;
@@ -91,310 +86,20 @@ typedef struct stats {
 
 	// number of allocations attempted but no memory available
 	size_t outOfMemoryCount;
-} _Stats;
+} Stats;
 
-static _Stats _stats = {
-		.spinLock = ATOMIC_FLAG_INIT,  // clear state
-		.currentAllocation = 0,
-		.outstandingAllocs = 0,
-		.outstandingAcquires = 0,
-		.outOfMemoryCount = 0
-};
+typedef struct debug_state {
+	Stats stats;
+	FolioInternalList *allocationList;
+} DebugState;
 
-/*
- * blocks in a busy loop until we acquire the spinlock.
- */
-static void
-_statsLock(void) {
-	bool prior;
-	do {
-		// set the spin lock to TRUE.
-		// We acquire the lock iff the prior value was FALSE
-		prior = atomic_flag_test_and_set(&_stats.spinLock);
-	} while (prior);
-}
-
-/*
- * Clears the spinlock.
- * precondition: you are holding the lock
- */
-static void
-_statsUnlock(void) {
-	atomic_flag_clear(&_stats.spinLock);
-}
-
-/* ********************************************************************
- * Internal linked list for storing allocations
- *
- * Cannot use memory_LinkedList because of circular reference problems
- *
- * Doubly linked list.  This allows us to store a reference in the memory
- * allocation to it's location in the linked list and remove it in time O(1).
- *
- * We a pthreads mutex on this.  Could be improved later.
- */
-
-struct internal_entry_t {
-	void *data;
-	InternalEntry *prev;
-	InternalEntry *next;
-};
-
-struct internal_list_t {
-	pthread_mutex_t lock;
-	InternalEntry *head;
-	InternalEntry *tail;
-};
-
-static InternalEntry *
-_internalEntry_Create(void *memory)
-{
-	InternalEntry *entry = malloc(sizeof(InternalEntry));
-	entry->data = memory;
-	entry->next = NULL;
-	entry->prev = NULL;
-	return entry;
-}
-
-static void
-_internalEntry_Release(InternalEntry **memoryPtr)
-{
-	free(*memoryPtr);
-	*memoryPtr = NULL;
-}
-
-static void *
-_internalEntry_GetData(const InternalEntry *entry)
-{
-	return entry->data;
-}
-
-static void
-_internalEntry_Display(const InternalEntry *entry, FILE *stream, const char *tag)
-{
-	fprintf(stream, "%-10s: InternalEntry (%p): prev %p next %p data %p\n",
-			tag,
-			(void *) entry,
-			(void *) entry->prev,
-			(void *) entry->next,
-			(void *) entry->data);
-
-	fprintf(stream, "%-10s: ", tag);
-	_memory_Display(entry->data, stream);
-}
-
-static void
-_internalList_Display(const InternalList *list, FILE *stream, const char *tag)
-{
-	fprintf(stream, "%-10s: InternalList (%p): head %p tail %p\n",
-			tag,
-			(void *) list,
-			(void *) list->head,
-			(void *) list->tail);
-}
-static void *
-_internalList_RemoveAt(InternalList *list, InternalEntry *entry)
-{
-#if DEBUG
-	_internalList_Display(list, stdout, "++RemoveAt");
-	_internalEntry_Display(entry, stdout, "++RemoveAt");
-#endif
-
-	if (list->head == entry) {
-		list->head = list->head->next;
-		if (list->head) {
-			list->head->prev = NULL;
-		} else {
-			list->tail = NULL;
-		}
-	} else if (list->tail == entry) {
-		list->tail = list->tail->prev;
-		assertNotNull(list->tail, "Invalid state, if tail has no prev, it should have been the head");
-		list->tail->next = NULL;
-	} else {
-		// it is in the middle somewhere
-		InternalEntry *next = entry->next;
-		InternalEntry *prev = entry->prev;
-
-		prev->next = next;
-		next->prev = prev;
-	}
-
-	void *data = _internalEntry_GetData(entry);
-	_internalEntry_Release(&entry);
-
-#if DEBUG
-	_internalList_Display(list, stdout, "--");
-#endif
-
-	return data;
-}
-
-static InternalEntry *
-_internalList_Append(InternalList *list, void *data)
-{
-	InternalEntry *entry = _internalEntry_Create(data);
-#if DEBUG
-	_internalList_Display(list, stdout, "++Append");
-	_internalEntry_Display(entry, stdout, "++Append");
-#endif
-
-	if (list->head == NULL) {
-		list->head = entry;
-		list->tail = entry;
-	} else {
-		list->tail->next = entry;
-		entry->prev = list->tail;
-		list->tail = entry;
-	}
-
-#if DEBUG
-	_internalList_Display(list, stdout, "--");
-	_internalEntry_Display(entry, stdout, "--");
-#endif
-	return entry;
-}
-
-static void
-_internalList_ForEach(InternalList *list, void (callback)(const void *memory, void *closure), void *closure)
-{
-#if DEBUG
-	_internalList_Display(list, stdout, "++ForEach");
-#endif
-
-	InternalEntry *entry = list->head;
-	while (entry) {
-		#if DEBUG
-			_internalEntry_Display(entry, stdout, "==");
-		#endif
-		callback(_internalEntry_GetData(entry), closure);
-		entry = entry->next;
-	}
-
-#if DEBUG
-	_internalList_Display(list, stdout, "--");
-#endif
-}
-
-static void
-_internalList_Lock(InternalList *list)
-{
-	pthread_mutex_lock(&list->lock);
-}
-
-static void
-_internalList_Unlock(InternalList *list)
-{
-	pthread_mutex_unlock(&list->lock);
-}
-
-static InternalList _privateAllocList = {
-		.lock = PTHREAD_MUTEX_INITIALIZER,
-		.head = NULL,
-		.tail = NULL
-};
-
-static InternalList *_allocList = &_privateAllocList;
-
-/* ********************************************************************/
-
-#define HEADER_BYTES ( \
-				__SIZEOF_LONG_LONG__ + \
-				__SIZEOF_SIZE_T__ + \
-				__SIZEOF_POINTER__ + \
-				__SIZEOF_POINTER__ + \
-				__SIZEOF_POINTER__ + \
-				__SIZEOF_INT__ + \
-				__SIZEOF_INT__)
-
-#define PAD_BYTES (48 - HEADER_BYTES)
-
-typedef struct header_t {
-	// This structure should always be a multiple of 8 bytes to keep
-	// the user memory aligned.
-	uint64_t magic1;
-
-	// The requested allocation length
-	size_t requestedLength;
-
-	Finalizer fini;
-
+typedef struct debug_header_t {
 	LongBowBacktrace *backtrace;
+	FolioInternalEntry *allocListHandle;
 
-	InternalEntry *allocListEntry;
+} __attribute__ ((aligned)) DebugHeader;
 
-	// pad out to alignment size bytes
-	// This ensures that magic2 will be adjacent to the user space
-#if PAD_BYTES > 0
-	uint8_t  pad[PAD_BYTES];
-#endif
-
-	atomic_int referenceCount;
-	uint32_t magic2;
-} __attribute__ ((aligned)) Header;
-
-typedef struct trailer_t {
-	uint64_t magic3;
-} Trailer;
-
-static Header *
-_getHeader(const void *memory)
-{
-	return (Header *) (memory - sizeof(Header));
-}
-
-static Trailer *
-_getTrailer(const Header *header)
-{
-	Trailer *tail = (Trailer *) (((uint8_t *) header) + sizeof(Header) + header->requestedLength);
-	return tail;
-}
-
-static int
-_referenceCount(const void *memory)
-{
-	const Header *header = _getHeader(memory);
-	return atomic_load(&header->referenceCount);
-}
-
-static void
-_validateMemoryLocation(const void *memory)
-{
-	// the smallest possible memory location we could have
-	const void *bottom = (const void *) sizeof(Header);
-	trapIllegalValueIf(memory < bottom, "Invalid memory location");
-}
-
-static void
-_validateInternal(const Header *header)
-{
-	if (header->magic1 == _magic1 && header->magic2 == _magic2) {
-		int refcount = _referenceCount(header);
-		if (refcount == 0) {
-			printf("\n\nHeader:\n");
-			longBowDebug_MemoryDump((const char *) header, sizeof(Header));
-			trapUnexpectedState("Memory: refcount is zero");
-		}
-
-		const Trailer *tail = _getTrailer(header);
-		if (tail->magic3 != _magic3) {
-			printf("\n\nTrailer:\n");
-			longBowDebug_MemoryDump((const char *) tail, sizeof(Trailer));
-			trapUnexpectedState("Memory: invalid trailer (memory overrun)");
-		}
-	} else {
-		printf("\n\nHeader:\n");
-		longBowDebug_MemoryDump((const char *) header, sizeof(Header));
-		trapUnexpectedState("Memory: invalid header (memory underrun)");
-	}
-}
-
-static size_t
-_calculateTotalAllocation(size_t requestedLength)
-{
-	return sizeof(Header) + sizeof(Trailer) + requestedLength;
-}
-
+/*
 static void
 _memory_Display(const void *memory, FILE *stream)
 {
@@ -412,265 +117,246 @@ _memory_Display(const void *memory, FILE *stream)
 			(void *) _getTrailer(header)
 			);
 }
+*/
 
-/*
- * precondition: you hold the stats lock
- *
- * @return true if allocation of length bytes is ok
- * @return false if out of memory
- */
-static bool
-_increaseCurrentAllocation(const size_t length)
+FolioMemoryProvider *
+folioStdProvider_Create(size_t poolSize)
 {
-	bool memoryIsAvailable = false;
+	FolioMemoryProvider *pool = folioInternalProvider_Create(&FolioDebugProviderTemplate, poolSize,
+									sizeof(DebugState), sizeof(DebugHeader));
 
-	if (_maximumMemory >= _stats.currentAllocation) {
-		size_t remainingMemory = _maximumMemory - _stats.currentAllocation;
+	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(pool);
+	state->allocationList = folioInternalList_Create();
 
-		if (length <= remainingMemory) {
-			memoryIsAvailable = true;
-			_stats.currentAllocation = _stats.currentAllocation + length;
-		}
-	}
-	return memoryIsAvailable;
+	memset(&state->stats, 0, sizeof(Stats));
+
+	return pool;
 }
 
-/*
- * precondition: you hold the stats lock
- */
-static void
-_decreaseCurrentAllocation(const size_t length)
-{
-	trapIllegalValueIf(_stats.currentAllocation < length, "current allocation less than length");
-	_stats.currentAllocation -= length;
-}
 
 static void *
-_allocate(const size_t length)
+_allocate(FolioMemoryProvider *provider, const size_t length)
 {
-	void * user = NULL;
+	void *memory = folioInternalProvider_Allocate(provider, length);
 
-	_statsLock();
-	bool memoryIsAvailable = _increaseCurrentAllocation(length);
-	if (memoryIsAvailable) {
-		_stats.outstandingAcquires++;
-		_stats.outstandingAllocs++;
+	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(provider);
+	DebugHeader *debug = (DebugHeader *) folioInternalProvider_GetProviderHeader(provider, memory);
+
+	folioLock_FlagLock(&state->stats.lock);
+	if (memory != NULL) {
+
+		debug->backtrace = longBowBacktrace_Create(_backtrace_depth, _backtrace_offset);
+
+		folioInternalList_Lock(state->allocationList);
+		debug->allocListHandle = folioInternalList_Append(state->allocationList, memory);
+		folioInternalList_Unlock(state->allocationList);
+
+		state->stats.outstandingAcquires++;
+		state->stats.outstandingAllocs++;
 	} else {
-		_stats.outOfMemoryCount++;
+		state->stats.outOfMemoryCount++;
 	}
-	_statsUnlock();
+	folioLock_FlagUnlock(&state->stats.lock);
 
-	if (memoryIsAvailable) {
-		size_t totalLength = sizeof(Header) + sizeof(Trailer) + length;
-		void *memory = malloc(totalLength);
-		Header *head = memory;
-
-		head->magic1 = _magic1;
-		head->requestedLength = length;
-		head->backtrace = longBowBacktrace_Create(_backtrace_depth, _backtrace_offset);
-		head->referenceCount = ATOMIC_VAR_INIT(1);
-		head->fini = NULL;
-		head->magic2 = _magic2;
-
-		user = memory + sizeof(Header);
-
-		Trailer *tail = _getTrailer(head);
-		tail->magic3 = _magic3;
-
-		_internalList_Lock(_allocList);
-		head->allocListEntry = _internalList_Append(_allocList, user);
-		_internalList_Unlock(_allocList);
-	}
-
-	return user;
+	return memory;
 }
 
 static void *
-_allocateAndZero(const size_t length)
+_allocateAndZero(FolioMemoryProvider *provider, const size_t length)
 {
-	void * memory = _allocate(length);
-	memset(memory, 0, length);
+	void * memory = _allocate(provider, length);
+	if (memory) {
+		memset(memory, 0, length);
+	}
 	return memory;
 }
 
 static void
-_setFinalizer(void *memory, Finalizer fini)
+_setFinalizer(FolioMemoryProvider *provider, void *memory, Finalizer fini)
 {
-	_validateMemoryLocation(memory);
-	Header *header = _getHeader(memory);
-	header->fini = fini;
+	folioInternalProvider_SetFinalizer(provider, memory, fini);
 }
 
 static void
-_validate(const void *memory)
+_validate(const FolioMemoryProvider *provider, const void *memory)
 {
-	_validateMemoryLocation(memory);
-	const Header *header = _getHeader(memory);
-
-	_validateInternal(header);
+	folioInternalProvider_Validate(provider, memory);
 }
 
 static void *
-_acquire(const void *memory)
+_acquire(FolioMemoryProvider *provider, const void *memory)
 {
-	_validateMemoryLocation(memory);
-	Header *header = _getHeader(memory);
+	folioInternalProvider_Acquire(provider, memory);
 
-	_validateInternal(header);
+	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(provider);
 
-	_statsLock();
-	_stats.outstandingAcquires++;
-	_statsUnlock();
-
-	// prior value must be greater than 0.  If it is not positive it means someone
-	// freed the memory during the time between _validateInternal and now.
-	int prior = atomic_fetch_add_explicit(&header->referenceCount, 1, memory_order_relaxed);
-	if (prior < 1) {
-		trapUnrecoverableState("The memory %p was freed during acquire", (void *) memory);
-	}
+	folioLock_FlagLock(&state->stats.lock);
+	state->stats.outstandingAcquires++;
+	folioLock_FlagUnlock(&state->stats.lock);
 
 	return (void *) memory;
 }
 
 static size_t
-_length(const void *memory)
+_length(const FolioMemoryProvider *provider, const void *memory)
 {
-	_validateMemoryLocation(memory);
-	Header *header = _getHeader(memory);
-
-	_validateInternal(header);
-
-	return header->requestedLength;
+	return folioInternalProvider_Length(provider, memory);
 }
 
 static void
-_release(void **memoryPtr)
+_release(FolioMemoryProvider *provider, void **memoryPtr)
 {
-	trapIllegalValueIf(memoryPtr == NULL, "Null memory pointer");
+	assertNotNull(memoryPtr, "memoryPtr must be non-null");
+	assertNotNull(*memoryPtr, "memoryPtr must dereference to non-null");
 
 	void *memory = *memoryPtr;
-	_validateMemoryLocation(memory);
 
-	Header *header = _getHeader(memory);
+	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(provider);
 
-	_validateInternal(header);
+	// must extract the header before release otherwise it might go away and copy it to local
+	DebugHeader *debug = (DebugHeader *) folioInternalProvider_GetProviderHeader(provider, memory);
+	DebugHeader debugCopy = *debug;
 
-	int prior = atomic_fetch_sub(&header->referenceCount, 1);
-	trapIllegalValueIf(prior < 1, "Reference count was %d < 1 when trying to release", prior);
+	bool finalRelease = folioInternalProvider_ReleaseMemory(provider, memoryPtr);
+	if (finalRelease) {
 
-	if (prior == 1) {
-		if (header->fini != NULL) {
-			header->fini(memory);
+		if (debugCopy.allocListHandle != NULL) {
+			folioInternalList_Lock(state->allocationList);
+			folioInternalList_RemoveAt(state->allocationList, debugCopy.allocListHandle);
+			folioInternalList_Unlock(state->allocationList);
 		}
 
-		if (header->allocListEntry != NULL) {
-			_internalList_Lock(_allocList);
-			_internalList_RemoveAt(_allocList, header->allocListEntry);
-			_internalList_Unlock(_allocList);
-		}
+		longBowBacktrace_Destroy(&debugCopy.backtrace);
 
-		_statsLock();
-		_decreaseCurrentAllocation(header->requestedLength);
-		_stats.outstandingAllocs--;
-		_stats.outstandingAcquires--;
-		_statsUnlock();
+		folioLock_FlagLock(&state->stats.lock);
+		state->stats.outstandingAcquires--;
+		state->stats.outstandingAllocs--;
+		folioLock_FlagUnlock(&state->stats.lock);
 
-		longBowBacktrace_Destroy(&header->backtrace);
-
-		// wipe out the whole allocation so not useful anymore
-		memset(header, 1, _calculateTotalAllocation(header->requestedLength));
-		free(header);
 	} else {
-		_statsLock();
-		_stats.outstandingAcquires--;
-		_statsUnlock();
+		folioLock_FlagLock(&state->stats.lock);
+		state->stats.outstandingAcquires--;
+		folioLock_FlagUnlock(&state->stats.lock);
 	}
-
-	*memoryPtr = NULL;
 }
 
 static void
-_report(FILE *stream)
+_report(const FolioMemoryProvider *provider, FILE *stream)
 {
-	_Stats copy;
+	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(provider);
 
-	_statsLock();
-	memcpy(&copy, &_stats, sizeof(_Stats));
-	_statsUnlock();
+	Stats copy;
+
+	folioLock_FlagLock(&state->stats.lock);
+	memcpy(&copy, &state->stats, sizeof(Stats));
+	folioLock_FlagUnlock(&state->stats.lock);
 
 	fprintf(stream, "\nMemoryDebugAlloc: outstanding allocs %zu acquires %zu, currentAllocation %zu\n\n",
 			copy.outstandingAllocs,
 			copy.outstandingAcquires,
-			copy.currentAllocation);
+			folioInternalProvider_AllocationSize(provider));
 }
 
 static void
-_setAvailableMemory(size_t availableMemory)
+_setAvailableMemory(FolioMemoryProvider *provider, size_t availableMemory)
 {
-	_maximumMemory = availableMemory;
+	folioInternalProvider_SetAvailableMemory(provider, availableMemory);
 }
 
 static size_t
-_acquireCount(void)
+_acquireCount(const FolioMemoryProvider *provider)
 {
-	_statsLock();
-	size_t count = _stats.outstandingAcquires;
-	_statsUnlock();
+	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(provider);
+
+	folioLock_FlagLock(&state->stats.lock);
+	size_t count = state->stats.outstandingAcquires;
+	folioLock_FlagUnlock(&state->stats.lock);
 	return count;
 }
 
 static size_t
-_allocationSize(void)
+_allocationSize(const FolioMemoryProvider *provider)
 {
-	_statsLock();
-	size_t count = _stats.currentAllocation;
-	_statsUnlock();
-	return count;
+	return folioInternalProvider_AllocationSize(provider);
 }
+
+static void
+_lock(FolioMemoryProvider *provider, void *memory)
+{
+	folioInternalProvider_Lock(provider, memory);
+}
+
+static void
+_unlock(FolioMemoryProvider *provider, void *memory)
+{
+	folioInternalProvider_Unlock(provider, memory);
+}
+
+/* **********
+ * Debug specific functions
+ */
 
 // This is a private function of longbow
 extern void longBowMemory_Deallocate(void **pointerPointer);
 
+struct backtrace_arg {
+	FILE *stream;
+	FolioMemoryProvider *provider;
+};
+
 static void
-_internalBacktrace(const void *memory, void *voidStream)
+_internalBacktrace(const void *memory, void *arg)
 {
-	FILE *stream = voidStream;
+	struct backtrace_arg *a = arg;
 
-	_validateMemoryLocation(memory);
-	Header *header = _getHeader(memory);
-	_validateInternal(header);
+	DebugHeader *debug = (DebugHeader *) folioInternalProvider_GetProviderHeader(a->provider, memory);
 
-	char *str = longBowBacktrace_ToString(header->backtrace);
-	fprintf(stream, "\nMemory Backtrace (%p)\n%s\n\n", memory, str);
+	char *str = longBowBacktrace_ToString(debug->backtrace);
+	fprintf(a->stream, "\nMemory Backtrace (%p)\n%s\n\n", memory, str);
 
 	longBowMemory_Deallocate((void **) &str);
 }
 
 void
-folioDebugAlloc_Backtrace(const void *memory, FILE *stream)
+folioDebugAlloc_Backtrace(FolioMemoryProvider *provider, const void *memory, FILE *stream)
 {
-	_internalBacktrace(memory, stream);
+	struct backtrace_arg arg = {
+			.stream = stream,
+			.provider = provider
+	};
+
+	_internalBacktrace(memory, &arg);
 }
 
 void
-folioDebugProvider_DumpBacktraces(FILE *stream)
+folioDebugProvider_DumpBacktraces(FolioMemoryProvider *provider, FILE *stream)
 {
-	_internalList_Lock(_allocList);
-	_internalList_ForEach(_allocList, _internalBacktrace, stream);
-	_internalList_Unlock(_allocList);
+	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(provider);
+
+	struct backtrace_arg arg = {
+			.stream = stream,
+			.provider = provider
+	};
+
+	folioInternalList_Lock(state->allocationList);
+	folioInternalList_ForEach(state->allocationList, _internalBacktrace, &arg);
+	folioInternalList_Unlock(state->allocationList);
 }
 
 static void
-_internalValidateCallback(const void *memory, __attribute__((unused)) void *dummy)
+_internalValidateCallback(const void *memory, void *arg)
 {
-	_validate(memory);
+	FolioMemoryProvider *provider = arg;
+	folioInternalProvider_Validate(provider, memory);
 }
 
 void
-folioDebugProvider_ValidateAll(void)
+folioDebugProvider_ValidateAll(FolioMemoryProvider *provider)
 {
-	_internalList_Lock(_allocList);
-	_internalList_ForEach(_allocList, _internalValidateCallback, NULL);
-	_internalList_Unlock(_allocList);
+	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(provider);
+
+	folioInternalList_Lock(state->allocationList);
+	folioInternalList_ForEach(state->allocationList, _internalValidateCallback, provider);
+	folioInternalList_Unlock(state->allocationList);
 }
 

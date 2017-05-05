@@ -31,25 +31,25 @@
 #include "folio.h"
 
 /**
- * Debug memory allocator.  All the features of the standard allocator
- * and tracks each acquire with a backtrace.
+ * Debug memory allocator with checks for underflow & overflow
+ * plus stack backtraces
  */
-extern FolioMemoryProvider FolioDebugProvider;
+FolioMemoryProvider * folioStdProvider_Create(size_t poolSize);
 
 /**
  * Display the backtrace for a specific memory allocation
  */
-void folioDebugProvider_Backtrace(const void *memory, FILE *stream);
+void folioDebugProvider_Backtrace(FolioMemoryProvider *provider, const void *memory, FILE *stream);
 
 /**
  * Display all backtraces
  */
-void folioDebugProvider_DumpBacktraces(FILE *stream);
+void folioDebugProvider_DumpBacktraces(FolioMemoryProvider *provider, FILE *stream);
 
 /**
  * Validates every allocation in the backtrace list.  This will be slow,
  * do not do it if you do not need to.
  */
-void folioDebugProvider_ValidateAll(void);
+void folioDebugProvider_ValidateAll(FolioMemoryProvider *provider);
 
 #endif /* FOLIO_DEBUGPROVIDER_H */

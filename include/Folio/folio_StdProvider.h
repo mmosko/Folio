@@ -32,6 +32,6 @@
 /**
  * Standard memory allocator with checks for underflow & overflow.
  */
-extern FolioMemoryProvider FolioStdProvider;
+FolioMemoryProvider * folioStdProvider_Create(size_t poolSize);
 
 #endif /* FOLIO_STDPROVIDER_H */

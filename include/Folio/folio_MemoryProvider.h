@@ -37,41 +37,48 @@
  */
 typedef void (*Finalizer)(void *memory);
 
-typedef struct folioMemoryProvider_memory_provider {
-	void * (*allocate)(const size_t length);
-	void * (*allocateAndZero)(const size_t length);
-	void * (*acquire)(const void * memory);
-	size_t (*length)(const void *memory);
-	void (*setFinalizer)(void *memory, Finalizer fini);
-	void (*release)(void **memoryPtr);
+typedef struct folioMemoryProvider_memory_provider FolioMemoryProvider;
+
+struct folioMemoryProvider_memory_provider {
+	/**
+	 * Release the entire memory pool.  Will release even if there are outstanding allocations.
+	 */
+	void (*releaseProvider)(FolioMemoryProvider **providerPtr);
+
+	void * (*allocate)(FolioMemoryProvider *provider, const size_t length);
+	void * (*allocateAndZero)(FolioMemoryProvider *provider, const size_t length);
+	void * (*acquire)(FolioMemoryProvider *provider, const void * memory);
+	size_t (*length)(const FolioMemoryProvider *provider, const void *memory);
+	void (*setFinalizer)(FolioMemoryProvider *provider, void *memory, Finalizer fini);
+	void (*release)(FolioMemoryProvider *provider, void **memoryPtr);
 
 	/**
 	 * A spin-lock on the memory using atomic operations.  Contenting
 	 * threads will busy-wait on the lock.  No ordering of threads and
 	 * starvation is possible.
 	 */
-	void (*lock)(void *memory);
+	void (*lock)(FolioMemoryProvider *provider, void *memory);
 
 	/**
 	 * Release the lock.  Will trap with LongBowTrapCannotObtainLockEvent
 	 * if the thread id of the locker is not the same as the unlocker.
 	 */
-	void (*unlock)(void *memory);
+	void (*unlock)(FolioMemoryProvider *provider, void *memory);
 
 	/**
 	 * Report statistics about the allocator
 	 */
-	void (*report)(FILE *stream);
+	void (*report)(const FolioMemoryProvider *provider, FILE *stream);
 
 	/**
 	 * Sanity checks on the allocated memory
 	 */
-	void (*validate)(const void *memory);
+	void (*validate)(const FolioMemoryProvider *provider, const void *memory);
 
 	/**
 	 * The current number of outstanding Acquires
 	 */
-	size_t (*acquireCount)(void);
+	size_t (*acquireCount)(const FolioMemoryProvider *provider);
 
 	/**
 	 * The total bytes of memory requested by the current
@@ -82,7 +89,7 @@ typedef struct folioMemoryProvider_memory_provider {
 	 * Actual memory used will be approximately 40 bytes more per
 	 * allocation (not acquire).
 	 */
-	size_t (*allocationSize)(void);
+	size_t (*allocationSize)(const FolioMemoryProvider *provider);
 
 	/**
 	 * Set the maximum amount of user memory available to the allocator.
@@ -96,22 +103,24 @@ typedef struct folioMemoryProvider_memory_provider {
 	 * You may set this at any time, though if set after some allocations
 	 * have taken place it will not trap until the next allocation.
 	 */
-	void (*setAvailableMemory)(size_t bytes);
-} FolioMemoryProvider;
+	void (*setAvailableMemory)(FolioMemoryProvider *provider, size_t bytes);
+};
 
-#define folioMemoryProvider_SetAvailableMemory(provider, maximum) (provider)->setAvailableMemory(maximum)
-#define folioMemoryProvider_Allocate(provider, length) (provider)->allocate(length)
-#define folioMemoryProvider_AllocateAndZero(provider, length) (provider)->allocateAndZero(length);
-#define folioMemoryProvider_SetFinalizer(provider, memory, fini) (provider)->setFinalizer(memory, fini)
-#define folioMemoryProvider_Acquire(provider, memory) (provider)->acquire(memory)
-#define folioMemoryProvider_Release(provider, memoryPtr) (provider)->release(memoryPtr)
-#define folioMemoryProvider_Length(provider, memory) (provider)->length(memory)
-#define folioMemoryProvider_Report(provider, stream) (provider)->report(stream)
-#define folioMemoryProvider_Validate(provider, memory) (provider)->validate(memory)
-#define folioMemoryProvider_OustandingReferences(provider) (provider)->acquireCount()
-#define folioMemoryProvider_AllocatedBytes(provider) (provider)->allocationSize()
-#define folioMemoryProvider_Lock(provider, memory) (provider)->lock(memory)
-#define folioMemoryProvider_Unlock(provider, memory) (provider)->unlock(memory)
+#define folioMemoryProvider_SetAvailableMemory(provider, maximum) (provider)->setAvailableMemory(provider, maximum)
+#define folioMemoryProvider_Allocate(provider, length) (provider)->allocate(provider, length)
+#define folioMemoryProvider_AllocateAndZero(provider, length) (provider)->allocateAndZero(provider, length);
+#define folioMemoryProvider_SetFinalizer(provider, memory, fini) (provider)->setFinalizer(provider, memory, fini)
+#define folioMemoryProvider_Acquire(provider, memory) (provider)->acquire(provider, memory)
+#define folioMemoryProvider_Release(provider, memoryPtr) (provider)->release(provider, memoryPtr)
+#define folioMemoryProvider_Length(provider, memory) (provider)->length(provider, memory)
+#define folioMemoryProvider_Report(provider, stream) (provider)->report(provider, stream)
+#define folioMemoryProvider_Validate(provider, memory) (provider)->validate(provider, memory)
+#define folioMemoryProvider_OustandingReferences(provider) (provider)->acquireCount(provider)
+#define folioMemoryProvider_AllocatedBytes(provider) (provider)->allocationSize(provider)
+#define folioMemoryProvider_Lock(provider, memory) (provider)->lock(provider, memory)
+#define folioMemoryProvider_Unlock(provider, memory) (provider)->unlock(provider, memory)
+
+void folioMemoryProvider_ReleaseProvider(FolioMemoryProvider **providerPtr);
 
 /**
  * Tests if the current number of Acquires is equal to the expected reference count.

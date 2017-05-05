@@ -31,6 +31,9 @@
 #include <stdio.h>
 #include <stdbool.h>
 
+void folio_Initialize(void);
+
+void folio_Finalize(void);
 
 /**
  * Should be done once (and only once) at program startup.
@@ -47,7 +50,7 @@ void folio_SetAvailableMemory(size_t maximum);
 /**
  * Returns the active allocator.
  */
-const FolioMemoryProvider *folio_GetProvider(void);
+FolioMemoryProvider *folio_GetProvider(void);
 
 void * folio_Allocate(const size_t length);
 

@@ -27,7 +27,12 @@
 #ifndef SRC_PRIVATE_FOLIO_LOCK_H_
 #define SRC_PRIVATE_FOLIO_LOCK_H_
 
+#include <stdatomic.h>
+
 typedef struct folio_lock FolioLock;
+
+void folioLock_FlagLock(atomic_flag *flag);
+void folioLock_FlagUnlock(atomic_flag *flag);
 
 /**
  * Creates a spin lock that uses atomic operations.

@@ -29,7 +29,21 @@
 #include "Folio/folio_StdProvider.h"
 #include <stdarg.h>
 
-static FolioMemoryProvider const *_provider = &FolioStdProvider;
+static FolioMemoryProvider *_provider = NULL;
+
+void
+folio_Initialize(void)
+{
+	if (_provider == NULL) {
+		_provider = folioStdProvider_Create(SIZE_MAX);
+	}
+}
+
+void
+folio_Finalize(void)
+{
+	folioMemoryProvider_ReleaseProvider(&_provider);
+}
 
 void
 folio_SetProvider(FolioMemoryProvider *provider)
@@ -42,8 +56,8 @@ folio_SetAvailableMemory(size_t maximum) {
 	folioMemoryProvider_SetAvailableMemory(_provider, maximum);
 }
 
-const
-FolioMemoryProvider *folio_GetAllocator(void)
+FolioMemoryProvider *
+folio_GetProvider(void)
 {
 	return _provider;
 }
@@ -115,5 +129,11 @@ folio_TestRefCount(size_t expectedRefCount, FILE *stream, const char *format, ..
 		result = false;
 	}
 	return result;
+}
+
+void
+folio_Validate(const void *memory)
+{
+	folioMemoryProvider_Validate(_provider, memory);
 }
 

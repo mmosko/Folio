@@ -28,6 +28,7 @@
 #include <LongBow/unit-test.h>
 
 #include "../src/folio_StdProvider.c"
+#include <Folio/folio.h>
 
 LONGBOW_TEST_RUNNER(folio_StdProvider)
 {
@@ -37,11 +38,15 @@ LONGBOW_TEST_RUNNER(folio_StdProvider)
 
 LONGBOW_TEST_RUNNER_SETUP(folio_StdProvider)
 {
+	folio_Initialize();
+
     return LONGBOW_STATUS_SUCCEEDED;
 }
 
 LONGBOW_TEST_RUNNER_TEARDOWN(folio_StdProvider)
 {
+	folio_Finalize();
+
     return LONGBOW_STATUS_SUCCEEDED;
 }
 
@@ -64,9 +69,6 @@ LONGBOW_TEST_FIXTURE_SETUP(Local)
 
 LONGBOW_TEST_FIXTURE_TEARDOWN(Local)
 {
-	// In case any testCase sets this, always reset it in Setup
-	_setAvailableMemory(SIZE_MAX);
-
 	int status = LONGBOW_STATUS_SUCCEEDED;
 
 	if (!folio_TestRefCount(0, stdout, "Memory leak in %s\n", longBowTestCase_GetFullName(testCase))) {
@@ -79,47 +81,44 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(Local)
 
 LONGBOW_TEST_CASE(Local, _allocate)
 {
-	printf("sizeof Header %zu Trailer %zu\n", sizeof(Header), sizeof(Trailer));
-
 	const size_t allocSize = 9;
-	void *memory = _allocate(allocSize);
+	void *memory = folio_Allocate(allocSize);
 	assertNotNull(memory, "Did not return memory pointer");
 
-	size_t acquireCount = _acquireCount();
+	size_t acquireCount = folio_OustandingReferences();
 	assertTrue(acquireCount == 1, "Expected 1 allocation, got %zu", acquireCount);
 
-	size_t allocationSize = _allocationSize();
+	size_t allocationSize = folio_AllocatedBytes();
 	assertTrue(allocationSize == allocSize, "Expected %zu bytes, got %zu", allocSize, allocationSize);
 
-	_validate(memory);
-	_release(&memory);
-
+	folio_Validate(memory);
+	folio_Release(&memory);
 }
 
 LONGBOW_TEST_CASE(Local, _allocate_ZeroLength)
 {
 	const size_t allocSize = 0;
-	void *memory = _allocate(allocSize);
+	void *memory = folio_Allocate(allocSize);
 	assertNotNull(memory, "Did not return memory pointer");
 
-	size_t acquireCount = _acquireCount();
+	size_t acquireCount = folio_OustandingReferences();
 	assertTrue(acquireCount == 1, "Expected 1 allocation, got %zu", acquireCount);
 
-	size_t allocationSize = _allocationSize();
+	size_t allocationSize = folio_AllocatedBytes();
 	assertTrue(allocationSize == allocSize, "Expected %zu bytes, got %zu", allocSize, allocationSize);
 
-	_validate(memory);
-	_release(&memory);
+	folio_Validate(memory);
+	folio_Release(&memory);
 }
 
 LONGBOW_TEST_CASE(Local, _allocate_OutOfMemory)
 {
-	_setAvailableMemory(64);
+	folio_SetAvailableMemory(64);
 
 	const size_t allocSize = 128;
 
 	// This will trap out of memory
-	void * memory = _allocate(allocSize);
+	void * memory = folio_Allocate(allocSize);
 	assertNull(memory, "memory should have been NULL due to out of memory");
 }
 
@@ -130,56 +129,56 @@ LONGBOW_TEST_CASE(Local, _allocateAndZero)
 	uint8_t truth[length];
 	memset(truth, 0, length);
 
-	void *memory = _allocateAndZero(length);
+	void *memory = folio_AllocateAndZero(length);
 	int result = memcmp(truth, memory, length);
 	assertTrue(result == 0, "Memory was not set to zero");
-	_release(&memory);
+	folio_Release(&memory);
 }
 
 LONGBOW_TEST_CASE(Local, _acquire)
 {
 	const size_t length = 128;
-	void *memory = _allocate(length);
-	void *mem2 = _acquire(memory);
-	_validate(memory);
-	_validate(mem2);
+	void *memory = folio_Allocate(length);
+	void *mem2 = folio_Acquire(memory);
+	folio_Validate(memory);
+	folio_Validate(mem2);
 
-	size_t acquireCount = _acquireCount();
+	size_t acquireCount = folio_OustandingReferences();
 	assertTrue(acquireCount == 2, "Expected 2 allocation, got %zu", acquireCount);
 
-	size_t allocationSize = _allocationSize();
+	size_t allocationSize = folio_AllocatedBytes();
 	assertTrue(allocationSize == length, "Expected %zu bytes, got %zu", length, allocationSize);
 
-	_release(&memory);
+	folio_Release(&memory);
 
-	acquireCount = _acquireCount();
+	acquireCount = folio_OustandingReferences();
 	assertTrue(acquireCount == 1, "Expected 1 allocation, got %zu", acquireCount);
 
-	allocationSize = _allocationSize();
+	allocationSize = folio_AllocatedBytes();
 	assertTrue(allocationSize == length, "Expected %zu bytes, got %zu", length, allocationSize);
 
-	_release(&mem2);
+	folio_Release(&mem2);
 }
 
 LONGBOW_TEST_CASE(Local, _report)
 {
 	const size_t length = 128;
-	void *memory = _allocate(length);
-	void *mem2 = _acquire(memory);
+	void *memory = folio_Allocate(length);
+	void *mem2 = folio_Acquire(memory);
 
-	_report(stdout);
+	folio_Report(stdout);
 
-	_release(&mem2);
-	_release(&memory);
+	folio_Release(&mem2);
+	folio_Release(&memory);
 }
 
 LONGBOW_TEST_CASE(Local, _length)
 {
 	const size_t length = 128;
-	void *memory = _allocate(length);
-	size_t test = _length(memory);
+	void *memory = folio_Allocate(length);
+	size_t test = folio_Length(memory);
 	assertTrue(length == test, "Wrong length, expected %zu got %zu", length, test);
-	_release(&memory);
+	folio_Release(&memory);
 }
 
 /*****************************************************/
@@ -192,7 +191,7 @@ LONGBOW_TEST_FIXTURE(CorruptMemory)
 
 LONGBOW_TEST_FIXTURE_SETUP(CorruptMemory)
 {
-	void *p = _allocate(64);
+	void *p = folio_Allocate(64);
 	longBowTestCase_SetClipBoardData(testCase, p);
 
 	return LONGBOW_STATUS_SUCCEEDED;
@@ -205,12 +204,7 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(CorruptMemory)
 	// Because we intentionally corrupt the memory, we cannot use
 	// normal release.  We cleanup here manually
 
-	void *p = longBowTestCase_GetClipBoardData(testCase);
-	Header *header = _getHeader(p);
-	_stats.outstandingAcquires--;
-	_stats.outstandingAllocs--;
-	_decreaseCurrentAllocation(header->requestedLength);
-	free(header);
+//	void *p = longBowTestCase_GetClipBoardData(testCase);
 
 	if (!folio_TestRefCount(0, stdout, "Memory leak in %s\n", longBowTestCase_GetFullName(testCase))) {
 		folio_Report(stdout);
@@ -223,10 +217,10 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(CorruptMemory)
 LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, overrun, .event = &LongBowTrapUnexpectedStateEvent)
 {
 	void *p = longBowTestCase_GetClipBoardData(testCase);
-	size_t length = _length(p);
+	size_t length = folio_Length(p);
 
 	memset(p, 0, length + 1);
-	_validate(p);
+	folio_Validate(p);
 }
 
 LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, underrun, .event = &LongBowTrapUnexpectedStateEvent)
@@ -236,7 +230,7 @@ LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, underrun, .event = &LongBowTrapUnexpect
 	// wipe out part of magic2, but be sure to not corrupt the length
 	void *p2 = p - 1;
 	memset(p2, 0, 1);
-	_validate(p);
+	folio_Validate(p);
 }
 
 /*****************************************************/

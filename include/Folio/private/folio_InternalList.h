@@ -24,31 +24,36 @@
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <LongBow/runtime.h>
-#include <Folio/folio_MemoryProvider.h>
-#include <stdarg.h>
+#ifndef INCLUDE_FOLIO_PRIVATE_FOLIO_INTERNALLIST_H_
+#define INCLUDE_FOLIO_PRIVATE_FOLIO_INTERNALLIST_H_
+
+#include <stdio.h>
+
+typedef struct folio_internal_entry FolioInternalEntry;
+typedef struct folio_internal_list FolioInternalList;
+
+FolioInternalList * folioInternalList_Create(void);
+void folioInternalList_Release(FolioInternalList **listPtr);
+
+void folioInternalList_Display(const FolioInternalList *list, FILE *stream, const char *tag);
+
+/**
+ * Appends the data to the list and returns a handle to the list entry
+ * that can be used by folio_InternalList_RemoveAt().
+ */
+FolioInternalEntry * folioInternalList_Append(FolioInternalList *list, void *data);
+
+void * folioInternalList_RemoveAt(FolioInternalList *list, FolioInternalEntry *entry);
+
+/**
+ * Execute a callback on each list entry in order.
+ */
+void folioInternalList_ForEach(FolioInternalList *list, void (callback)(const void *memory, void *closure),
+		void *closure);
+
+void folioInternalList_Lock(FolioInternalList *list);
+
+void folioInternalList_Unlock(FolioInternalList *list);
 
 
-void
-folioMemoryProvider_ReleaseProvider(FolioMemoryProvider **providerPtr)
-{
-	assertNotNull(providerPtr, "providerPtr must be non-null");
-	assertNotNull(*providerPtr, "providerPtr must dereference to non-null");
-
-	(*providerPtr)->releaseProvider(providerPtr);
-}
-
-bool
-folioMemoryProvider_TestRefCount(FolioMemoryProvider const *provider, size_t expectedRefCount, FILE *stream, const char *format, ...)
-{
-	bool result = true;
-	if (folioMemoryProvider_OustandingReferences(provider) != expectedRefCount) {
-		va_list va;
-		va_start(va, format);
-
-		vfprintf(stream, format, va);
-		va_end(va);
-		result = false;
-	}
-	return result;
-}
+#endif /* INCLUDE_FOLIO_PRIVATE_FOLIO_INTERNALLIST_H_ */

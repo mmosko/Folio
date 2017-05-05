@@ -79,16 +79,28 @@ folioLock_Release(FolioLock **lockPtr)
 }
 
 void
-folioLock_Lock(FolioLock *lock)
+folioLock_FlagLock(atomic_flag *flag)
 {
-	assertNotNull(lock, "lock must be non-null");
-
 	// spin until the prior value is FALSE, which indicates that
 	// no one else had the lock.
 	bool prior;
 	do {
-		prior = atomic_flag_test_and_set(&lock->spinLock);
+		prior = atomic_flag_test_and_set(flag);
 	} while (!prior);
+
+}
+void
+folioLock_FlagUnlock(atomic_flag *flag)
+{
+	atomic_flag_clear(flag);
+}
+
+void
+folioLock_Lock(FolioLock *lock)
+{
+	assertNotNull(lock, "lock must be non-null");
+
+	folioLock_FlagLock(&lock->spinLock);
 
 	lock->lockingThreadId = pthread_self();
 }
@@ -97,7 +109,7 @@ void
 folioLock_Unlock(FolioLock *lock)
 {
 	if (pthread_equal(pthread_self(), lock->lockingThreadId)) {
-		atomic_flag_clear(&lock->spinLock);
+		folioLock_FlagUnlock(&lock->spinLock);
 	} else {
 		trapCannotObtainLock("Caller thread id not equal to locker thread id");
 	}

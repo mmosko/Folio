@@ -1,8 +1,27 @@
 /*
- * folio_FolioInternalList.c
- *
- *  Created on: May 5, 2017
- *      Author: marc
+   Copyright (c) 2017, Palo Alto Research Center
+   All rights reserved.
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions are met:
+
+   * Redistributions of source code must retain the above copyright notice, this
+     list of conditions and the following disclaimer.
+
+   * Redistributions in binary form must reproduce the above copyright notice,
+     this list of conditions and the following disclaimer in the documentation
+     and/or other materials provided with the distribution.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+   AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+   IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+   FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+   DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+   CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+   OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
 #include <LongBow/runtime.h>
@@ -68,8 +87,8 @@ _internalEntry_Display(const FolioInternalEntry *entry, FILE *stream, const char
 			(void *) entry->next,
 			(void *) entry->data);
 
-	fprintf(stream, "%-10s: ", tag);
-	_memory_Display(entry->data, stream);
+	fprintf(stream, "%-10s: FIXME\n", tag);
+	//_memory_Display(entry->data, stream);
 }
 
 /* **********************************
@@ -86,7 +105,7 @@ FolioInternalList *
 folioInternalList_Create(void)
 {
 	FolioInternalList *list = calloc(1, sizeof(FolioInternalList));
-	pthread_mutex_init(&list->lock);
+	pthread_mutex_init(&list->lock, NULL);
 	return list;
 }
 
@@ -99,7 +118,7 @@ folioInternalList_Release(FolioInternalList **listPtr)
 }
 
 void
-folio_InternalList_Display(const FolioInternalList *list, FILE *stream, const char *tag)
+folioInternalList_Display(const FolioInternalList *list, FILE *stream, const char *tag)
 {
 	fprintf(stream, "%-10s: FolioInternalList (%p): head %p tail %p\n",
 			tag,
@@ -109,10 +128,10 @@ folio_InternalList_Display(const FolioInternalList *list, FILE *stream, const ch
 }
 
 void *
-folio_InternalList_RemoveAt(FolioInternalList *list, FolioInternalEntry *entry)
+folioInternalList_RemoveAt(FolioInternalList *list, FolioInternalEntry *entry)
 {
 #if DEBUG
-	folio_InternalList_Display(list, stdout, "++RemoveAt");
+	folioInternalList_Display(list, stdout, "++RemoveAt");
 	_internalEntry_Display(entry, stdout, "++RemoveAt");
 #endif
 
@@ -140,18 +159,18 @@ folio_InternalList_RemoveAt(FolioInternalList *list, FolioInternalEntry *entry)
 	_internalEntry_Release(&entry);
 
 #if DEBUG
-	folio_InternalList_Display(list, stdout, "--");
+	folioInternalList_Display(list, stdout, "--");
 #endif
 
 	return data;
 }
 
 FolioInternalEntry *
-folio_InternalList_Append(FolioInternalList *list, void *data)
+folioInternalList_Append(FolioInternalList *list, void *data)
 {
 	FolioInternalEntry *entry = _internalEntry_Create(data);
 #if DEBUG
-	folio_InternalList_Display(list, stdout, "++Append");
+	folioInternalList_Display(list, stdout, "++Append");
 	_internalEntry_Display(entry, stdout, "++Append");
 #endif
 
@@ -165,17 +184,17 @@ folio_InternalList_Append(FolioInternalList *list, void *data)
 	}
 
 #if DEBUG
-	folio_InternalList_Display(list, stdout, "--");
+	folioInternalList_Display(list, stdout, "--");
 	_internalEntry_Display(entry, stdout, "--");
 #endif
 	return entry;
 }
 
 void
-folio_InternalList_ForEach(FolioInternalList *list, void (callback)(const void *memory, void *closure), void *closure)
+folioInternalList_ForEach(FolioInternalList *list, void (callback)(const void *memory, void *closure), void *closure)
 {
 #if DEBUG
-	folio_InternalList_Display(list, stdout, "++ForEach");
+	folioInternalList_Display(list, stdout, "++ForEach");
 #endif
 
 	FolioInternalEntry *entry = list->head;
@@ -188,18 +207,18 @@ folio_InternalList_ForEach(FolioInternalList *list, void (callback)(const void *
 	}
 
 #if DEBUG
-	folio_InternalList_Display(list, stdout, "--");
+	folioInternalList_Display(list, stdout, "--");
 #endif
 }
 
 void
-folio_InternalList_Lock(FolioInternalList *list)
+folioInternalList_Lock(FolioInternalList *list)
 {
 	pthread_mutex_lock(&list->lock);
 }
 
 void
-folio_InternalList_Unlock(FolioInternalList *list)
+folioInternalList_Unlock(FolioInternalList *list)
 {
 	pthread_mutex_unlock(&list->lock);
 }

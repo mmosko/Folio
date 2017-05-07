@@ -44,8 +44,11 @@
 static uint32_t _backtrace_depth = 10;
 static uint32_t _backtrace_offset = 2;
 
-static void * _allocate(FolioMemoryProvider *provider, const size_t length);
-static void * _allocateAndZero(FolioMemoryProvider *provider, const size_t length);
+static FolioMemoryProvider *_acquireProvider(const FolioMemoryProvider *provider);
+static bool _releaseProvider(FolioMemoryProvider **providerPtr);
+
+static void * _allocate(FolioMemoryProvider *provider, const size_t length, Finalizer fini);
+static void * _allocateAndZero(FolioMemoryProvider *provider, const size_t length, Finalizer fini);
 static void * _acquire(FolioMemoryProvider *provider, const void *memory);
 static size_t _length(const FolioMemoryProvider *provider, const void *memory);
 static void _release(FolioMemoryProvider *provider, void **memoryPtr);
@@ -53,18 +56,18 @@ static void _report(const FolioMemoryProvider *provider, FILE *stream);
 static void _validate(const FolioMemoryProvider *provider, const void *memory);
 static size_t _acquireCount(const FolioMemoryProvider *provider);
 static size_t _allocationSize(const FolioMemoryProvider *provider);
-static void _setFinalizer(FolioMemoryProvider *provider, void *memory, Finalizer fini);
 static void _setAvailableMemory(FolioMemoryProvider *provider, size_t maximum);
 
 static void _lock(FolioMemoryProvider *provider, void *memory);
 static void _unlock(FolioMemoryProvider *provider, void *memory);
 
 const FolioMemoryProvider FolioDebugProviderTemplate = {
+	.acquireProvider = _acquireProvider,
+	.releaseProvider = _releaseProvider,
 	.allocate = _allocate,
 	.allocateAndZero = _allocateAndZero,
 	.acquire = _acquire,
 	.length = _length,
-	.setFinalizer = _setFinalizer,
 	.release = _release,
 	.report = _report,
 	.validate = _validate,
@@ -120,31 +123,42 @@ _memory_Display(const void *memory, FILE *stream)
 */
 
 FolioMemoryProvider *
-folioStdProvider_Create(size_t poolSize)
+folioDebugProvider_Create(size_t poolSize)
 {
-	FolioMemoryProvider *pool = folioInternalProvider_Create(&FolioDebugProviderTemplate, poolSize,
+	FolioMemoryProvider *provider = folioInternalProvider_Create(&FolioDebugProviderTemplate, poolSize,
 									sizeof(DebugState), sizeof(DebugHeader));
 
-	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(pool);
+	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(provider);
 	state->allocationList = folioInternalList_Create();
 
 	memset(&state->stats, 0, sizeof(Stats));
 
-	return pool;
+	return provider;
 }
 
+static FolioMemoryProvider *
+_acquireProvider(const FolioMemoryProvider *provider)
+{
+	return folioInternalProvider_AcquireProvider(provider);
+}
+
+static bool
+_releaseProvider(FolioMemoryProvider **providerPtr)
+{
+	return folioInternalProvider_ReleaseProvider(providerPtr);
+}
 
 static void *
-_allocate(FolioMemoryProvider *provider, const size_t length)
+_allocate(FolioMemoryProvider *provider, const size_t length, Finalizer fini)
 {
-	void *memory = folioInternalProvider_Allocate(provider, length);
+	void *memory = folioInternalProvider_Allocate(provider, length, fini);
 
 	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(provider);
-	DebugHeader *debug = (DebugHeader *) folioInternalProvider_GetProviderHeader(provider, memory);
 
 	folioLock_FlagLock(&state->stats.lock);
 	if (memory != NULL) {
 
+		DebugHeader *debug = (DebugHeader *) folioInternalProvider_GetProviderHeader(provider, memory);
 		debug->backtrace = longBowBacktrace_Create(_backtrace_depth, _backtrace_offset);
 
 		folioInternalList_Lock(state->allocationList);
@@ -162,19 +176,13 @@ _allocate(FolioMemoryProvider *provider, const size_t length)
 }
 
 static void *
-_allocateAndZero(FolioMemoryProvider *provider, const size_t length)
+_allocateAndZero(FolioMemoryProvider *provider, const size_t length, Finalizer fini)
 {
-	void * memory = _allocate(provider, length);
+	void * memory = _allocate(provider, length, fini);
 	if (memory) {
 		memset(memory, 0, length);
 	}
 	return memory;
-}
-
-static void
-_setFinalizer(FolioMemoryProvider *provider, void *memory, Finalizer fini)
-{
-	folioInternalProvider_SetFinalizer(provider, memory, fini);
 }
 
 static void

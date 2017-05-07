@@ -28,6 +28,7 @@
 #define SRC_PRIVATE_FOLIO_INTERNALPROVIDER_H_
 
 #include <Folio/folio.h>
+#include <stdio.h>
 
 /**
  * Creates a memory pool with a maximum size.
@@ -69,6 +70,24 @@ FolioMemoryProvider *folioInternalProvider_Create(const FolioMemoryProvider *tem
 		size_t providerStateLength, size_t providerHeaderLength);
 
 /**
+ * Acquire a reference to the provider.
+ *
+ * Has no effect on a default (statically allocated) provider like FolioStdProvider (likewise release
+ * has no effect on them either).
+ */
+FolioMemoryProvider *folioInternalProvider_AcquireProvider(const FolioMemoryProvider *provider);
+
+/**
+ * Release a reference to the provider.
+ *
+ * Returns true if this was the final release and the memory was freed.
+ *
+ * TODO: Need to handle statically allocated providers, right now it will try to
+ * call free() on the provider.
+ */
+bool folioInternalProvider_ReleaseProvider(FolioMemoryProvider **providerPtr);
+
+/**
  * Returns a pointer to to the provider storage in the pool.  It will be of
  * length providerStateLength from the Create function.
  */
@@ -96,9 +115,8 @@ void *folioInternalProvider_GetProviderHeader(FolioMemoryProvider const *provide
 size_t folioInternalProvider_GetProviderHeaderLength(const FolioMemoryProvider *provider);
 
 
-void folioInternalProvider_ReleaseProvider(FolioMemoryProvider **providerPtr);
-void * folioInternalProvider_Allocate(FolioMemoryProvider *provider, const size_t length);
-void * folioInternalProvider_AllocateAndZero(FolioMemoryProvider *provider, const size_t length);
+void * folioInternalProvider_Allocate(FolioMemoryProvider *provider, const size_t length, Finalizer fini);
+void * folioInternalProvider_AllocateAndZero(FolioMemoryProvider *provider, const size_t length, Finalizer fini);
 void * folioInternalProvider_Acquire(FolioMemoryProvider *provider, const void *memory);
 size_t folioInternalProvider_Length(const FolioMemoryProvider *provider, const void *memory);
 
@@ -113,10 +131,20 @@ bool folioInternalProvider_ReleaseMemory(FolioMemoryProvider *provider, void **m
 
 void folioInternalProvider_Validate(const FolioMemoryProvider *provider, const void *memory);
 size_t folioInternalProvider_AllocationSize(const FolioMemoryProvider *provider);
-void folioInternalProvider_SetFinalizer(FolioMemoryProvider *provider, void *memory, Finalizer fini);
 void folioInternalProvider_SetAvailableMemory(FolioMemoryProvider *provider, size_t maximum);
 void folioInternalProvider_Lock(FolioMemoryProvider *provider, void *memory);
 void folioInternalProvider_Unlock(FolioMemoryProvider *provider, void *memory);
 
+/**
+ * Report information about the provider
+ */
+void folioInternalProvider_Report(const FolioMemoryProvider *provider, FILE *stream);
+
+/**
+ * display information about the memory allocation.
+ *
+ * Does not display the actual memory, only header information.
+ */
+void folioInternalProvider_Display(const FolioMemoryProvider *provider, const void *memory, FILE *stream);
 
 #endif /* SRC_PRIVATE_FOLIO_INTERNALPROVIDER_H_ */

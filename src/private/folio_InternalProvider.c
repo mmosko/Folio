@@ -30,145 +30,12 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <inttypes.h>
 
-#include <stdatomic.h>
+#include <Folio/private/folio_Header.h>
+#include <Folio/private/folio_Pool.h>
 
-#define _alignment_width sizeof(void *)
-
-/*
- * Used to identify a folio_internal_provider memory block
- */
-#define _internalMagic 0xa16588fb703b6f06ULL
-
-typedef struct folio_pool {
-	FolioMemoryProvider provider;
-
-	// Bit pattern to make sure we are really working with this data structure.
-	uint64_t internalMagic1;
-
-	// per-instance magics to guard memory locations
-	uint64_t headerMagic;
-
-	// The size of extra bytes at the end of FolioPool for
-	// the user to store data.
-	size_t providerStateLength;
-
-	// The amount of extra bytes to allocate in each memory allocation for
-	// the user to store extra data.
-	size_t providerHeaderLength;
-
-	// The number of extra bytes in the header for the guard pattern
-	size_t headerGuardLength;
-
-	// The total length of the header, including our data, providerStateLength,
-	// and the header guard
-	size_t headerAlignedLength;
-
-	// The size of the trailer including the guard length.
-	size_t trailerAlignedLength;
-
-	// The number of bytes allocated for the guard in the trailer
-	size_t trailerGuardLength;
-
-	// Used to start a guard byte array pattern.  Varries for each pool.
-	uint8_t guardPattern;
-
-	atomic_flag allocationLock;
-
-	// amount of memory in the pool
-	size_t poolSize;
-
-	atomic_uint currentAllocation;
-
-	// Bit pattern to make sure we are really working with this data structure.
-	uint64_t internalMagic2;
-} FolioPool __attribute__((aligned));
-
-
-/**
- * The header really looks like this:
- *
- * | FolioHeader ......  | providerHeader ..... | guard ..... |
- * | sizeof(FolioHeader) | providerHeaderLength | guardLength |
- * | ................ aligned ((sizeof(void *))) ............ |
- */
-typedef struct folio_header {
-	uint64_t magic1;
-
-	// The requested allocation length
-	size_t requestedLength;
-
-	Finalizer fini;
-
-	FolioLock *lock;
-
-	atomic_int referenceCount;
-
-	size_t providerDataLength;
-	size_t guardLength;
-	uint64_t magic2;
-} FolioHeader __attribute__((aligned));
-
-typedef struct folio_trailer {
-	uint64_t magic3;
-	uint8_t guard[0];
-} FolioTrailer;
-
-#if 0
-
-/*
- * Used to initialize the default pool
- */
-extern const FolioMemoryProvider FolioStdProviderTemplate;
-
-
-/* ******************************************************
- * A statically declared pool so we can have a default.
- *
- * It has a fixed size provider state space and provider header length
- */
-
-#define _staticProviderStateLength 256
-#define _staticProviderHeaderLength 16
-#define _static_alignment_width 8
-#define _staticHeaderGuardLength 8
-
-#include <Folio/folio_StdProvider.h>
-
-typedef struct folio_static_pool {
-	FolioPool pool;
-	uint8_t providerState[_staticProviderStateLength];
-	uint8_t guard[_static_alignment_width];
-} FolioStaticPool;
-
-const FolioStaticPool FolioInternalStaticPool = {
-	.pool = {
-		.provider = {
-				.allocate = folioStdProvider_Allocate,
-		},
-
-		.internalMagic1 = _internalMagic,
-		.headerMagic = 0x05fd095c69493bf8ULL,
-		.providerStateLength = _staticProviderStateLength,
-		.providerHeaderLength = _staticProviderHeaderLength,
-		.headerGuardLength = _staticHeaderGuardLength,
-//		.headerAlignedLength = sizeof(FolioHeader) + _staticProviderStateLength + _staticHeaderGuardLength,
-		.headerAlignedLength = 328,
-		.trailerAlignedLength = sizeof(FolioTrailer),
-		.trailerGuardLength = 0,
-		.guardPattern = 0xA0,
-		.allocationLock = ATOMIC_FLAG_INIT,
-		.poolSize = SIZE_MAX,
-		.currentAllocation = ATOMIC_VAR_INIT(0),
-		.internalMagic2 = _internalMagic
-	},
-	.providerState = { 0 },
-	.guard = { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7 },
-};
-
-//const FolioMemoryProvider *FolioInternalProvider = (const FolioMemoryProvider *) &_staticPool;
-#endif
-
+//#define DEBUG 1
 
 /* ****************************************************** */
 
@@ -188,12 +55,6 @@ _verifyGuard(uint8_t pattern, size_t length, const uint8_t guard[length])
 	return i == length;
 }
 
-static int
-_referenceCount(const FolioHeader *header)
-{
-	int refCount = atomic_load(&header->referenceCount);
-	return refCount;
-}
 
 /**
  * @param alignment The length to align to (must be multiple of sizeof(void *))
@@ -216,38 +77,47 @@ _calculateAlignedLength(size_t length)
     return alignedLength;
 }
 
-static atomic_flag _needRandomInitialized = ATOMIC_FLAG_INIT;
-static struct random_data _random_state;
-
-static void
-_initializeRandom(void)
-{
-	if (! atomic_flag_test_and_set(&_needRandomInitialized) ) {
-		unsigned seed = 3842923;
-		srandom_r(seed, & _random_state);
-	}
-}
-
 static uint64_t
 _getRandomMagic(void)
 {
-	int32_t r1, r2;
-	random_r(&_random_state, &r1);
-	random_r(&_random_state, &r2);
-	uint64_t magic1 = r1 << sizeof(uint32_t) | r2;
+	uint64_t r1, r2;
+	r1 = random();
+	r2 = random();
+	uint64_t magic1 = r1 << 32 | r2;
+
 	return magic1;
 }
 
+static FolioPool *
+_getPool(const FolioMemoryProvider *provider)
+{
+	return (FolioPool *) provider->poolState;
+}
+
+/*
+ * The memory will look like this:
+ *
+ * +-----------------------+
+ * | FolioMemoryProvider   |
+ * +-----------------------+
+ * | FolioPool             | <-- _getPool(provider)  = pool->poolState pointer
+ * +-----------------------+
+ * | ProviderState         | <-- folioInternalProvider_GetProviderState(provider) = pool + sizeof(FolioPool)
+ * +-----------------------+
+ *
+ */
 FolioMemoryProvider *
 folioInternalProvider_Create(const FolioMemoryProvider *template, size_t memorySize, size_t providerStateLength, size_t providerHeaderLength)
 {
-	_initializeRandom();
-
-	size_t length = sizeof(FolioPool) + providerStateLength;
+	size_t length = sizeof(FolioMemoryProvider) + sizeof(FolioPool) + providerStateLength;
 	size_t alignedLength = _calculateAlignedLength(length);
 
-	FolioPool *pool = calloc(1, alignedLength);
-	memcpy(&pool->provider, template, sizeof(FolioMemoryProvider));
+	FolioMemoryProvider *provider = calloc(1, alignedLength);
+	memcpy(provider, template, sizeof(FolioMemoryProvider));
+
+	provider->poolState = (uint8_t *) provider + sizeof(FolioMemoryProvider);
+
+	FolioPool *pool = _getPool(provider);
 
 	pool->internalMagic1 = _internalMagic;
 	pool->headerMagic = _getRandomMagic();
@@ -261,8 +131,7 @@ folioInternalProvider_Create(const FolioMemoryProvider *template, size_t memoryS
 	}
 
 	pool->headerGuardLength = pool->headerAlignedLength - headerLengthNoGuard;
-	pool->trailerAlignedLength = _calculateAlignedLength(sizeof(FolioTrailer));
-	pool->trailerGuardLength = pool->trailerAlignedLength - sizeof(FolioTrailer);
+	pool->trailerAlignedLength = sizeof(FolioTrailer);
 
 	pool->guardPattern = (uint8_t)pool->headerMagic + 1;
 	if (pool->guardPattern == 0) {
@@ -272,16 +141,30 @@ folioInternalProvider_Create(const FolioMemoryProvider *template, size_t memoryS
 	atomic_flag_clear(&pool->allocationLock);
 	pool->poolSize = memorySize;
 	pool->currentAllocation = ATOMIC_VAR_INIT(0);
+	pool->referenceCount = ATOMIC_VAR_INIT(1);
 
 	pool->internalMagic2 = _internalMagic;
 
-	return (FolioMemoryProvider *) pool;
+#if DEBUG
+	folioInternalProvider_Report(provider, stderr);
+#endif
+
+
+	return provider;
 }
 
 static const uint8_t *
-_getGuardAddress(const FolioPool *pool, const FolioHeader *header)
+_getHeaderGuardAddress(const FolioPool *pool, const FolioHeader *header)
 {
 	size_t guardOffset = sizeof(FolioHeader) + pool->providerHeaderLength;
+	const uint8_t *guard = (uint8_t *) header + guardOffset;
+	return guard;
+}
+
+static const uint8_t *
+_getTrailerGuardAddress(const FolioPool *pool, const FolioHeader *header)
+{
+	size_t guardOffset = pool->headerAlignedLength + folioHeader_GetRequestedLength(header);
 	const uint8_t *guard = (uint8_t *) header + guardOffset;
 	return guard;
 }
@@ -289,6 +172,7 @@ _getGuardAddress(const FolioPool *pool, const FolioHeader *header)
 static bool
 _verifyInternalProvider(FolioPool const *internalProvider)
 {
+	assertNotNull(internalProvider, "internalProvider must be non-null");
 	bool result = false;
 	if (internalProvider->internalMagic1 == _internalMagic && internalProvider->internalMagic2 == _internalMagic) {
 		result = true;
@@ -300,8 +184,8 @@ static bool
 _verifyHeader(FolioPool const *pool, const FolioHeader *header)
 {
 	bool result = false;
-	if ((header->magic1 == pool->headerMagic) && (header->magic2 == pool->headerMagic)) {
-		const uint8_t *guard = _getGuardAddress(pool, header);
+	if (folioHeader_CompareMagic(header, pool->headerMagic)) {
+		const uint8_t *guard = _getHeaderGuardAddress(pool, header);
 
 		if (_verifyGuard(pool->guardPattern, pool->headerGuardLength, guard) ) {
 			result = true;
@@ -312,11 +196,12 @@ _verifyHeader(FolioPool const *pool, const FolioHeader *header)
 }
 
 static bool
-_verifyTrailer(const FolioPool *pool, const FolioTrailer *trailer)
+_verifyTrailer(const FolioPool *pool, const FolioTrailer *trailer, size_t trailerGuardLength)
 {
+	const uint8_t *guard = (const uint8_t *) trailer - trailerGuardLength;
 	bool result = false;
 	if (trailer->magic3 == pool->headerMagic) {
-		if (_verifyGuard(pool->guardPattern, pool->headerGuardLength, trailer->guard)) {
+		if (_verifyGuard(pool->guardPattern, trailerGuardLength, guard)) {
 			result = true;
 		}
 	}
@@ -326,21 +211,25 @@ _verifyTrailer(const FolioPool *pool, const FolioTrailer *trailer)
 static FolioHeader *
 _getHeader(const FolioPool *pool, const void *memory)
 {
-	trapUnexpectedStateIf(memory < (void *) pool->headerAlignedLength, "Invalid memory address (%p)", memory);
+	size_t length = pool->headerAlignedLength;
+	trapUnexpectedStateIf(memory < (void *) length, "Invalid memory address (%p)", memory);
 	return (FolioHeader *) ((uint8_t *) memory - pool->headerAlignedLength);
 }
 
 static FolioTrailer *
 _getTrailer(const FolioPool *pool, const FolioHeader *header)
 {
-	FolioTrailer *trailer = (FolioTrailer *)((uint8_t *) header + pool->headerAlignedLength + header->requestedLength);
+	FolioTrailer *trailer = (FolioTrailer *)((uint8_t *) header
+								+ pool->headerAlignedLength
+								+ folioHeader_GetRequestedLength(header)
+								+ folioHeader_GetTrailerGuardLength(header));
 	return trailer;
 }
 
 void *
 folioInternalProvider_GetProviderState(FolioMemoryProvider const *provider)
 {
-	FolioPool const * pool = (FolioPool const *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 	return ((uint8_t *) pool) + sizeof(FolioPool);
 }
@@ -348,20 +237,20 @@ folioInternalProvider_GetProviderState(FolioMemoryProvider const *provider)
 void *
 folioInternalProvider_GetProviderHeader(FolioMemoryProvider const *provider, const void *memory)
 {
-	const FolioPool * pool = (const FolioPool *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	FolioHeader *header = _getHeader(pool, memory);
 	trapUnexpectedStateIf( !_verifyHeader(pool, header), "memory corrupted");
 
-	void *providerHeader = ((uint8_t *) header) + pool->headerAlignedLength;
+	void *providerHeader = ((uint8_t *) header) + sizeof(FolioHeader);
 	return providerHeader;
 }
 
 size_t
 folioInternalProvider_GetProviderStateLength(const FolioMemoryProvider *provider)
 {
-	FolioPool const * pool = (FolioPool const *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 	return pool->providerStateLength;
 }
@@ -369,7 +258,7 @@ folioInternalProvider_GetProviderStateLength(const FolioMemoryProvider *provider
 size_t
 folioInternalProvider_GetProviderHeaderLength(const FolioMemoryProvider *provider)
 {
-	FolioPool const * pool = (FolioPool const *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 	return pool->providerHeaderLength;
 }
@@ -378,16 +267,6 @@ folioInternalProvider_GetProviderHeaderLength(const FolioMemoryProvider *provide
  * Implementation of FolioMemoryProvider
  *
  */
-
-void
-folioInternalProvider_Allocate_ReleaseProvider(FolioMemoryProvider **providerPtr)
-{
-	FolioPool* pool = (FolioPool *) *providerPtr;
-	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
-
-	free(pool);
-	*providerPtr = NULL;
-}
 
 /*
  * Tests for available memory and if so subtracts the allocation length.
@@ -430,10 +309,38 @@ _decreaseCurrentAllocation(FolioPool *pool, const size_t length)
 	folioLock_FlagUnlock(&pool->allocationLock);
 }
 
-void *
-folioInternalProvider_Allocate(FolioMemoryProvider *provider, const size_t length)
+static size_t
+_computeTotalLength(FolioPool *pool, size_t requestLength, size_t trailerGuardLength)
 {
-	FolioPool * pool = (FolioPool *) provider;
+	size_t totalLength = pool->headerAlignedLength + pool->headerGuardLength + requestLength +
+							trailerGuardLength + pool->trailerAlignedLength;
+
+	return totalLength;
+}
+
+/*
+ * The memory will look like this:
+ *
+ * +-----------------------+
+ * | FolioHeader           |
+ * +-----------------------+  <- aligned
+ * | ProviderHeader        |
+ * +-----------------------+
+ * | header guard[]        |
+ * +-----------------------+  <- aligned
+ * | user memory           |
+ * +-----------------------+
+ * | trailer guard[]       |
+ * +-----------------------+  <- aligned
+ * | FolioTrailer          |
+ * +-----------------------+  <- aligned
+ *
+ */
+
+void *
+folioInternalProvider_Allocate(FolioMemoryProvider *provider, const size_t length, Finalizer fini)
+{
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	void *user = NULL;
@@ -441,66 +348,84 @@ folioInternalProvider_Allocate(FolioMemoryProvider *provider, const size_t lengt
 	bool memoryIsAvailable = _increaseCurrentAllocation(pool, length);
 
 	if (memoryIsAvailable) {
-		size_t totalLength = pool->headerAlignedLength + length + pool->trailerAlignedLength;
+		size_t alignedLength = _calculateAlignedLength(length);
+		size_t trailerGuardLength = alignedLength - length;
+
+		size_t totalLength = _computeTotalLength(pool, length, trailerGuardLength);
+
 		void *memory = malloc(totalLength);
 		FolioHeader *header = memory;
 
-		header->magic1 = pool->headerMagic;
-		header->requestedLength = length;
-		header->referenceCount = ATOMIC_VAR_INIT(1);
-		header->fini = NULL;
-		header->magic2 = pool->headerMagic;
+		FolioLock *lock = folioLock_Create();
+		folioHeader_Initialize(header, pool->headerMagic, length, lock, 1, pool->providerHeaderLength,
+								fini, pool->headerGuardLength, trailerGuardLength);
+		folioLock_Release(&lock);
 
 		user = memory + pool->headerAlignedLength;
 
-		uint8_t *guard = (uint8_t *) _getGuardAddress(pool, header);
-		_fillGuard(pool->guardPattern, pool->headerGuardLength, guard);
+		uint8_t *headerGuard = (uint8_t *) _getHeaderGuardAddress(pool, header);
+		_fillGuard(pool->guardPattern, pool->headerGuardLength, headerGuard);
 
 		FolioTrailer *trailer = _getTrailer(pool, header);
 		trailer->magic3 = pool->headerMagic;
-		_fillGuard(pool->guardPattern, pool->trailerGuardLength, trailer->guard);
+
+		uint8_t *trailerGuard = (uint8_t *) _getTrailerGuardAddress(pool, header);
+		_fillGuard(pool->guardPattern, trailerGuardLength, trailerGuard);
+
+		folioInternalProvider_Validate(provider, user);
+
+#if DEBUG
+		fprintf(stderr, "Header %p Guard %p User %p Trailer %p Guard %p TotalLength %zu\n",
+				(void *) header,
+				(void *) headerGuard,
+				(void *) user,
+				(void *) trailer,
+				(void *) trailerGuard,
+				totalLength);
+
+		folioInternalProvider_Display(provider, user, stderr);
+
+		longBowDebug_MemoryDump((const char *) header, totalLength);
+#endif
 	}
 
 	return user;
 }
 
 void *
-folioInternalProvider_AllocateAndZero(FolioMemoryProvider *provider, const size_t length)
+folioInternalProvider_AllocateAndZero(FolioMemoryProvider *provider, const size_t length, Finalizer fini)
 {
-	void * memory = folioInternalProvider_Allocate(provider, length);
+	void * memory = folioInternalProvider_Allocate(provider, length, fini);
 	if (memory) {
 		memset(memory, 0, length);
 	}
 	return memory;
 }
 
-void
-folioInternalProvider_SetFinalizer(FolioMemoryProvider *provider, void *memory, Finalizer fini)
-{
-	FolioPool * pool = (FolioPool *) provider;
-	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
-
-	FolioHeader *header = _getHeader(pool, memory);
-	trapUnexpectedStateIf( !_verifyHeader(pool, header), "memory corrupted");
-
-	header->fini = fini;
-}
-
 static void
 _validateInternal(FolioPool *pool, const FolioHeader *header)
 {
-	if (header->magic1 == pool->headerMagic && header->magic2 == pool->headerMagic) {
-		int refcount = _referenceCount(header);
+	if (folioHeader_CompareMagic(header, pool->headerMagic)) {
+		int refcount = folioHeader_ReferenceCount(header);
 		if (refcount == 0) {
-			printf("\n\nHeader:\n");
+			char *headerString = folioHeader_ToString(header);
+			printf("\n\nHeader: %s\n", headerString);
+			free(headerString);
+
 			longBowDebug_MemoryDump((const char *) header, pool->headerAlignedLength);
 			trapUnexpectedState("Memory: refcount is zero");
 		}
 
 		const FolioTrailer *trailer = _getTrailer(pool, header);
-		if (!_verifyTrailer(pool, trailer)) {
-			printf("\n\nTrailer:\n");
-			longBowDebug_MemoryDump((const char *) trailer, pool->trailerAlignedLength);
+		if (!_verifyTrailer(pool, trailer, folioHeader_GetTrailerGuardLength(header))) {
+			char *trailerString = folioTrailer_ToString(trailer, folioHeader_GetTrailerGuardLength(header));
+			printf("\n\nTrailer: %s\n", trailerString);
+			free(trailerString);
+
+			size_t totalLength = _computeTotalLength(pool, folioHeader_GetRequestedLength(header), folioHeader_GetTrailerGuardLength(header));
+
+
+			longBowDebug_MemoryDump((const char *) header, totalLength);
 			trapUnexpectedState("Memory: invalid trailer (memory overrun)");
 		}
 	} else {
@@ -513,17 +438,64 @@ _validateInternal(FolioPool *pool, const FolioHeader *header)
 void
 folioInternalProvider_Validate(const FolioMemoryProvider *provider, const void *memory)
 {
-	FolioPool * pool = (FolioPool *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	FolioHeader *header = _getHeader(pool, memory);
 	_validateInternal(pool, header);
 }
 
+FolioMemoryProvider *
+folioInternalProvider_AcquireProvider(const FolioMemoryProvider *provider)
+{
+	FolioPool *pool = _getPool(provider);
+	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
+
+	// prior value must be greater than 0.  If it is not positive it means someone
+	// freed the memory during the time between _validateInternal and now.
+	int prior = atomic_fetch_add_explicit(&pool->referenceCount, 1, memory_order_relaxed);
+	if (prior < 1) {
+		trapUnrecoverableState("The provider %p was freed during acquire", (void *) provider);
+	}
+
+	return (FolioMemoryProvider *) provider;
+}
+
+/**
+ * Release a reference to the provider.
+ */
+bool
+folioInternalProvider_ReleaseProvider(FolioMemoryProvider **providerPtr)
+{
+	trapIllegalValueIf(providerPtr == NULL, "providerPtr must be non-null");
+
+	FolioMemoryProvider *provider = *providerPtr;
+
+	FolioPool *pool = _getPool(provider);
+	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
+
+	int prior = atomic_fetch_sub(&pool->referenceCount, 1);
+	trapIllegalValueIf(prior < 1, "Reference count was %d < 1 when trying to release", prior);
+
+	bool finalRelease = false;
+	if (prior == 1) {
+		finalRelease = true;
+
+		// Write over magic1 so it invalidates the block
+		pool->internalMagic1 = 0;
+		free(provider);
+	}
+
+	*providerPtr = NULL;
+	return finalRelease;
+
+}
+
+
 void *
 folioInternalProvider_Acquire(FolioMemoryProvider *provider, const void *memory)
 {
-	FolioPool * pool = (FolioPool *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	FolioHeader *header = _getHeader(pool, memory);
@@ -532,7 +504,7 @@ folioInternalProvider_Acquire(FolioMemoryProvider *provider, const void *memory)
 
 	// prior value must be greater than 0.  If it is not positive it means someone
 	// freed the memory during the time between _validateInternal and now.
-	int prior = atomic_fetch_add_explicit(&header->referenceCount, 1, memory_order_relaxed);
+	int prior = folioHeader_IncrementReferenceCount(header);
 	if (prior < 1) {
 		trapUnrecoverableState("The memory %p was freed during acquire", (void *) memory);
 	}
@@ -543,13 +515,13 @@ folioInternalProvider_Acquire(FolioMemoryProvider *provider, const void *memory)
 size_t
 folioInternalProvider_Length(const FolioMemoryProvider *provider, const void *memory)
 {
-	FolioPool * pool = (FolioPool *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	FolioHeader *header = _getHeader(pool, memory);
 	_validateInternal(pool, header);
 
-	return header->requestedLength;
+	return folioHeader_GetRequestedLength(header);
 }
 
 bool
@@ -559,26 +531,26 @@ folioInternalProvider_ReleaseMemory(FolioMemoryProvider *provider, void **memory
 
 	void *memory = *memoryPtr;
 
-	FolioPool * pool = (FolioPool *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	FolioHeader *header = _getHeader(pool, memory);
 	_validateInternal(pool, header);
 
-	int prior = atomic_fetch_sub(&header->referenceCount, 1);
+	int prior = folioHeader_DecrementReferenceCount(header);
 	trapIllegalValueIf(prior < 1, "Reference count was %d < 1 when trying to release", prior);
 
 	bool finalRelease = false;
 	if (prior == 1) {
 		finalRelease = true;
-		if (header->fini != NULL) {
-			header->fini(memory);
-		}
+		folioHeader_ExecuteFinalizer(header, memory);
 
-		_decreaseCurrentAllocation(pool, header->requestedLength);
+		_decreaseCurrentAllocation(pool, folioHeader_GetRequestedLength(header));
+
+		folioHeader_Finalize(header);
 
 		// Write over magic1 so it invalidates the block
-		memset(header, 0, sizeof(uint64_t));
+		folioHeader_Invalidate(header);
 		free(header);
 	}
 
@@ -589,7 +561,7 @@ folioInternalProvider_ReleaseMemory(FolioMemoryProvider *provider, void **memory
 void
 folioInternalProvider_SetAvailableMemory(FolioMemoryProvider *provider, size_t availableMemory)
 {
-	FolioPool * pool = (FolioPool *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	pool->poolSize = availableMemory;
@@ -598,7 +570,7 @@ folioInternalProvider_SetAvailableMemory(FolioMemoryProvider *provider, size_t a
 size_t
 folioInternalProvider_AllocationSize(const FolioMemoryProvider *provider)
 {
-	FolioPool * pool = (FolioPool *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	folioLock_FlagLock(&pool->allocationLock);
@@ -610,24 +582,72 @@ folioInternalProvider_AllocationSize(const FolioMemoryProvider *provider)
 void
 folioInternalProvider_Lock(FolioMemoryProvider *provider, void *memory)
 {
-	FolioPool * pool = (FolioPool *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	FolioHeader *header = _getHeader(pool, memory);
 	_validateInternal(pool, header);
 
-	folioLock_Lock(header->lock);
+	folioHeader_Lock(header);
 }
 
 void
 folioInternalProvider_Unlock(FolioMemoryProvider *provider, void *memory)
 {
-	FolioPool * pool = (FolioPool *) provider;
+	FolioPool *pool = _getPool(provider);
 	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
 
 	FolioHeader *header = _getHeader(pool, memory);
 	_validateInternal(pool, header);
 
-	folioLock_Unlock(header->lock);
+	folioHeader_Unlock(header);
+}
+
+void
+folioInternalProvider_Report(const FolioMemoryProvider *provider, FILE *stream)
+{
+	FolioPool *pool = _getPool(provider);
+	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
+
+	bool locked = atomic_flag_test_and_set(&pool->allocationLock);
+	if (!locked) {
+		atomic_flag_clear(&pool->allocationLock);
+	}
+
+	fprintf(stream, "Pool (%p) : hdrMagic 0x%016" PRIx64 " provStateLen %u provHdrLen %u hdrAlgnLen %u hdrGrdLen %u "
+			" trlAlgnLen %u GrdByte 0x%02x IsLocked %d poolSize %zu alloc'd %d refCount %d\n",
+			(void *) pool,
+			pool->headerMagic,
+			pool->providerStateLength,
+			pool->providerHeaderLength,
+			pool->headerAlignedLength,
+			pool->headerGuardLength,
+			pool->trailerAlignedLength,
+			pool->guardPattern,
+			locked,
+			pool->poolSize,
+			pool->currentAllocation,
+			atomic_load(&pool->referenceCount));
+}
+
+void
+folioInternalProvider_Display(const FolioMemoryProvider *provider, const void *memory, FILE *stream)
+{
+	FolioPool *pool = _getPool(provider);
+	trapUnexpectedStateIf( !_verifyInternalProvider(pool), "provider pointer is not a FolioPool");
+
+	FolioHeader *header = _getHeader(pool, memory);
+	char *headerString = folioHeader_ToString(header);
+
+	FolioTrailer *trailer = _getTrailer(pool, header);
+	char *trailerString = folioTrailer_ToString(trailer, folioHeader_GetTrailerGuardLength(header));
+
+	fprintf(stream, "Memory (%p) : %s, %s\n",
+			(void *) memory,
+			headerString,
+			trailerString);
+
+	free(trailerString);
+	free(headerString);
 }
 

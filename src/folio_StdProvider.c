@@ -33,9 +33,13 @@
 #include <Folio/folio_StdProvider.h>
 #include <Folio/private/folio_Lock.h>
 #include <Folio/private/folio_InternalProvider.h>
+#include <Folio/private/folio_Pool.h>
 
-static void * _allocate(FolioMemoryProvider *provider, const size_t length);
-static void * _allocateAndZero(FolioMemoryProvider *provider, const size_t length);
+static FolioMemoryProvider *_acquireProvider(const FolioMemoryProvider *provider);
+static bool _releaseProvider(FolioMemoryProvider **providerPtr);
+
+static void * _allocate(FolioMemoryProvider *provider, const size_t length, Finalizer fini);
+static void * _allocateAndZero(FolioMemoryProvider *provider, const size_t length, Finalizer fini);
 static void * _acquire(FolioMemoryProvider *provider, const void *memory);
 static size_t _length(const FolioMemoryProvider *provider, const void *memory);
 static void _release(FolioMemoryProvider *provider, void **memoryPtr);
@@ -43,33 +47,13 @@ static void _report(const FolioMemoryProvider *provider, FILE *stream);
 static void _validate(const FolioMemoryProvider *provider, const void *memory);
 static size_t _acquireCount(const FolioMemoryProvider *provider);
 static size_t _allocationSize(const FolioMemoryProvider *provider);
-static void _setFinalizer(FolioMemoryProvider *provider, void *memory, Finalizer fini);
 static void _setAvailableMemory(FolioMemoryProvider *provider, size_t maximum);
 
 static void _lock(FolioMemoryProvider *provider, void *memory);
 static void _unlock(FolioMemoryProvider *provider, void *memory);
 
-const FolioMemoryProvider FolioStdProviderTemplate = {
-	.allocate = _allocate,
-	.allocateAndZero = _allocateAndZero,
-	.acquire = _acquire,
-	.length = _length,
-	.setFinalizer = _setFinalizer,
-	.release = _release,
-	.report = _report,
-	.validate = _validate,
-	.acquireCount = _acquireCount,
-	.allocationSize = _allocationSize,
-	.setAvailableMemory = _setAvailableMemory,
-	.lock = _lock,
-	.unlock = _unlock
-};
-
 typedef struct stats {
-	FolioLock *spinLock;
-
-	// The bytes allocated - bytes freed
-	size_t currentAllocation;
+	atomic_flag lock;
 
 	size_t outstandingAllocs;
 	size_t outstandingAcquires;
@@ -78,47 +62,120 @@ typedef struct stats {
 	size_t outOfMemoryCount;
 } _Stats;
 
+
+#define GuardLength (sizeof(void *))
+
+/*
+ * Our local storage for the static provider
+ */
+typedef struct static_storage {
+	FolioPool pool;
+	_Stats stats;
+
+	// This ensures we have atleast 4 bytes of guard, it may be more
+	uint8_t guard[GuardLength];
+} __attribute__((aligned)) StaticStorage;
+
+struct complete_header {
+	FolioMemoryProvider provider;
+	StaticStorage storage;
+} __attribute__((aligned));
+
+#define StdHeaderMagic 0x05fd095c69493bf8ULL
+#define AlignedLength sizeof(struct complete_header)
+#define GuardPattern 0xE0
+
+static StaticStorage _storage = {
+		.pool = {
+				.internalMagic1 = _internalMagic,
+				.headerMagic = StdHeaderMagic,
+				.providerStateLength = sizeof(_Stats),
+				.providerHeaderLength = 0,
+				.headerGuardLength = GuardLength,
+				.headerAlignedLength = sizeof(FolioHeader),
+				.trailerAlignedLength = sizeof(FolioTrailer),
+				.guardPattern = GuardPattern,
+				.allocationLock = ATOMIC_FLAG_INIT,
+				.poolSize = SIZE_MAX,
+				.currentAllocation = ATOMIC_VAR_INIT(0),
+				.referenceCount = ATOMIC_VAR_INIT(1),
+				.internalMagic2 = _internalMagic
+		},
+		.stats = {
+				.lock = ATOMIC_FLAG_INIT,
+				.outstandingAllocs = 0,
+				.outstandingAcquires = 0,
+				.outOfMemoryCount = 0
+		},
+		.guard = { GuardPattern, 0xE1, 0xE2, 0xE3 }
+	};
+
+FolioMemoryProvider FolioStdProvider = {
+		.acquireProvider = _acquireProvider,
+		.releaseProvider = _releaseProvider,
+		.allocate = _allocate,
+		.allocateAndZero = _allocateAndZero,
+		.acquire = _acquire,
+		.length = _length,
+		.release = _release,
+		.report = _report,
+		.validate = _validate,
+		.acquireCount = _acquireCount,
+		.allocationSize = _allocationSize,
+		.setAvailableMemory = _setAvailableMemory,
+		.lock = _lock,
+		.unlock = _unlock,
+		.poolState = &_storage
+};
+
+/* ********************************************************** */
+
 FolioMemoryProvider *
 folioStdProvider_Create(size_t poolSize)
 {
-	FolioMemoryProvider *pool = folioInternalProvider_Create(&FolioStdProviderTemplate, poolSize, sizeof(_Stats), 0);
+	FolioMemoryProvider *pool = folioInternalProvider_Create(&FolioStdProvider, poolSize, sizeof(_Stats), 0);
 	return pool;
 }
 
+static FolioMemoryProvider *
+_acquireProvider(const FolioMemoryProvider *provider)
+{
+	return folioInternalProvider_AcquireProvider(provider);
+}
+
+static bool
+_releaseProvider(FolioMemoryProvider **providerPtr)
+{
+	return folioInternalProvider_ReleaseProvider(providerPtr);
+}
 
 static void *
-_allocate(FolioMemoryProvider *provider, const size_t length)
+_allocate(FolioMemoryProvider *provider, const size_t length, Finalizer fini)
 {
-	void *memory = folioInternalProvider_Allocate(provider, length);
+	void *memory = folioInternalProvider_Allocate(provider, length, fini);
 
 	_Stats *stats = (_Stats *) folioInternalProvider_GetProviderState(provider);
 
-	folioLock_Lock(stats->spinLock);
+	folioLock_FlagLock(&stats->lock);
 	if (memory != NULL) {
 		stats->outstandingAcquires++;
 		stats->outstandingAllocs++;
 	} else {
 		stats->outOfMemoryCount++;
 	}
-	folioLock_Unlock(stats->spinLock);
+	folioLock_FlagUnlock(&stats->lock);
 
 	return memory;
 }
 
 static void *
-_allocateAndZero(FolioMemoryProvider *provider, const size_t length)
+_allocateAndZero(FolioMemoryProvider *provider, const size_t length, Finalizer fini)
 {
-	void * memory = _allocate(provider, length);
+	void * memory = _allocate(provider, length, fini);
 	if (memory) {
 		memset(memory, 0, length);
 	}
 	return memory;
-}
-
-static void
-_setFinalizer(FolioMemoryProvider *provider, void *memory, Finalizer fini)
-{
-	folioInternalProvider_SetFinalizer(provider, memory, fini);
 }
 
 static void
@@ -134,9 +191,9 @@ _acquire(FolioMemoryProvider *provider, const void *memory)
 
 	_Stats *stats = (_Stats *) folioInternalProvider_GetProviderState(provider);
 
-	folioLock_Lock(stats->spinLock);
+	folioLock_FlagLock(&stats->lock);
 	stats->outstandingAcquires++;
-	folioLock_Unlock(stats->spinLock);
+	folioLock_FlagUnlock(&stats->lock);
 
 	return (void *) memory;
 }
@@ -158,14 +215,14 @@ _release(FolioMemoryProvider *provider, void **memoryPtr)
 	_Stats *stats = (_Stats *) folioInternalProvider_GetProviderState(provider);
 
 	if (finalRelease) {
-		folioLock_Lock(stats->spinLock);
+		folioLock_FlagLock(&stats->lock);
 		stats->outstandingAcquires--;
 		stats->outstandingAllocs--;
-		folioLock_Unlock(stats->spinLock);
+		folioLock_FlagUnlock(&stats->lock);
 	} else {
-		folioLock_Lock(stats->spinLock);
+		folioLock_FlagLock(&stats->lock);
 		stats->outstandingAcquires--;
-		folioLock_Unlock(stats->spinLock);
+		folioLock_FlagUnlock(&stats->lock);
 	}
 }
 
@@ -176,9 +233,9 @@ _report(const FolioMemoryProvider *provider, FILE *stream)
 
 	_Stats copy;
 
-	folioLock_Lock(stats->spinLock);
+	folioLock_FlagLock(&stats->lock);
 	memcpy(&copy, stats, sizeof(_Stats));
-	folioLock_Unlock(stats->spinLock);
+	folioLock_FlagUnlock(&stats->lock);
 
 	fprintf(stream, "\nMemoryDebugAlloc: outstanding allocs %zu acquires %zu, currentAllocation %zu\n\n",
 			copy.outstandingAllocs,
@@ -197,9 +254,9 @@ _acquireCount(const FolioMemoryProvider *provider)
 {
 	_Stats *stats = (_Stats *) folioInternalProvider_GetProviderState(provider);
 
-	folioLock_Lock(stats->spinLock);
+	folioLock_FlagLock(&stats->lock);
 	size_t count = stats->outstandingAcquires;
-	folioLock_Unlock(stats->spinLock);
+	folioLock_FlagUnlock(&stats->lock);
 	return count;
 }
 

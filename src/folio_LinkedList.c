@@ -53,9 +53,8 @@ _entryFinalize(void *memory)
 Entry *
 entry_Create(const void *data)
 {
-	Entry *entry = folio_AllocateAndZero(sizeof(Entry));
+	Entry *entry = folio_AllocateAndZero(sizeof(Entry), _entryFinalize);
 	assertNotNull(entry, "Got null from allocator");
-	folio_SetFinalizer(entry, _entryFinalize);
 
 	entry->data = folio_Acquire(data);
 	return entry;
@@ -86,9 +85,8 @@ _finalize(void *memory)
 FolioLinkedList *
 folioLinkedList_Create(void)
 {
-	FolioLinkedList *list = folio_AllocateAndZero(sizeof(FolioLinkedList));
+	FolioLinkedList *list = folio_AllocateAndZero(sizeof(FolioLinkedList), _finalize);
 	assertNotNull(list, "Got null from allocator");
-	folio_SetFinalizer(list, _finalize);
 
 	return list;
 }

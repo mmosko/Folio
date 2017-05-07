@@ -29,13 +29,13 @@
 #include <stdarg.h>
 
 
-void
+bool
 folioMemoryProvider_ReleaseProvider(FolioMemoryProvider **providerPtr)
 {
 	assertNotNull(providerPtr, "providerPtr must be non-null");
 	assertNotNull(*providerPtr, "providerPtr must dereference to non-null");
 
-	(*providerPtr)->releaseProvider(providerPtr);
+	return (*providerPtr)->releaseProvider(providerPtr);
 }
 
 bool

@@ -24,31 +24,32 @@
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#include <Folio/private/folio_Pool.h>
 #include <LongBow/runtime.h>
 #include "Folio/folio.h"
 #include "Folio/folio_StdProvider.h"
 #include <stdarg.h>
 
-static FolioMemoryProvider *_provider = NULL;
 
-void
-folio_Initialize(void)
-{
-	if (_provider == NULL) {
-		_provider = folioStdProvider_Create(SIZE_MAX);
-	}
-}
-
-void
-folio_Finalize(void)
-{
-	folioMemoryProvider_ReleaseProvider(&_provider);
-}
+// Because it is a static allocation, we cannot get a reference count.
+// In any case, it is statically allocated and we cannot release it.
+static FolioMemoryProvider *_defaultProvider = &FolioStdProvider;
+static FolioMemoryProvider *_provider = &FolioStdProvider;
 
 void
 folio_SetProvider(FolioMemoryProvider *provider)
 {
-	_provider = provider;
+	if (_provider != _defaultProvider) {
+		folioMemoryProvider_ReleaseProvider(&_provider);
+	}
+
+	_provider = folioMemoryProvider_AcquireProvider(provider);
+}
+
+void
+folio_ReleaseProvider(void)
+{
+	_provider = NULL;
 }
 
 void
@@ -65,19 +66,13 @@ folio_GetProvider(void)
 void *
 folio_Allocate(size_t length)
 {
-	return folioMemoryProvider_Allocate(_provider, length);
+	return folioMemoryProvider_Allocate(_provider, length, NULL);
 }
 
 void *
-folio_AllocateAndZero(size_t length)
+folio_AllocateAndZero(size_t length, Finalizer fini)
 {
-	return folioMemoryProvider_AllocateAndZero(_provider, length);
-}
-
-void
-folio_SetFinalizer(void *memory, Finalizer fini)
-{
-	folioMemoryProvider_SetFinalizer(_provider, memory, fini);
+	return folioMemoryProvider_AllocateAndZero(_provider, length, fini);
 }
 
 void *

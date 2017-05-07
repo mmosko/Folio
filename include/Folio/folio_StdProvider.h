@@ -29,6 +29,8 @@
 
 #include "folio.h"
 
+extern FolioMemoryProvider FolioStdProvider;
+
 /**
  * Standard memory allocator with checks for underflow & overflow.
  */

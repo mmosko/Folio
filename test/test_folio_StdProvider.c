@@ -38,14 +38,14 @@ LONGBOW_TEST_RUNNER(folio_StdProvider)
 
 LONGBOW_TEST_RUNNER_SETUP(folio_StdProvider)
 {
-	folio_Initialize();
+//	folio_Initialize();
 
     return LONGBOW_STATUS_SUCCEEDED;
 }
 
 LONGBOW_TEST_RUNNER_TEARDOWN(folio_StdProvider)
 {
-	folio_Finalize();
+//	folio_Finalize();
 
     return LONGBOW_STATUS_SUCCEEDED;
 }
@@ -75,6 +75,8 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(Local)
 		folio_Report(stdout);
 		status = LONGBOW_STATUS_MEMORYLEAK;
 	}
+
+	folio_SetAvailableMemory(SIZE_MAX);
 
 	return status;
 }
@@ -129,7 +131,7 @@ LONGBOW_TEST_CASE(Local, _allocateAndZero)
 	uint8_t truth[length];
 	memset(truth, 0, length);
 
-	void *memory = folio_AllocateAndZero(length);
+	void *memory = folio_AllocateAndZero(length, NULL);
 	int result = memcmp(truth, memory, length);
 	assertTrue(result == 0, "Memory was not set to zero");
 	folio_Release(&memory);
@@ -204,12 +206,23 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(CorruptMemory)
 	// Because we intentionally corrupt the memory, we cannot use
 	// normal release.  We cleanup here manually
 
-//	void *p = longBowTestCase_GetClipBoardData(testCase);
+	void *memory = longBowTestCase_GetClipBoardData(testCase);
+	FolioPool *pool = (FolioPool *) FolioStdProvider.poolState;
+	FolioHeader *h = (FolioHeader *) ((uint8_t *) memory - pool->headerAlignedLength);
+	size_t requestLength = folioHeader_GetRequestedLength(h);
+	free(h);
+
+	_Stats *stats = (_Stats *) folioInternalProvider_GetProviderState(&FolioStdProvider);
+	stats->outstandingAllocs--;
+	stats->outstandingAcquires--;
+	pool->currentAllocation -= requestLength;
 
 	if (!folio_TestRefCount(0, stdout, "Memory leak in %s\n", longBowTestCase_GetFullName(testCase))) {
 		folio_Report(stdout);
 		status = LONGBOW_STATUS_MEMORYLEAK;
 	}
+
+	folio_SetAvailableMemory(SIZE_MAX);
 
 	return status;
 }

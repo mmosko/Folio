@@ -31,14 +31,11 @@
 #include <stdio.h>
 #include <stdbool.h>
 
-void folio_Initialize(void);
-
-void folio_Finalize(void);
-
 /**
  * Should be done once (and only once) at program startup.
  *
- * Defaults to FolioStdProvider if not otherwise set.
+ * Defaults to FolioStdProvider if not otherwise set.  When set, the prior
+ * provider is released.
  */
 void folio_SetProvider(FolioMemoryProvider *provider);
 
@@ -52,16 +49,14 @@ void folio_SetAvailableMemory(size_t maximum);
  */
 FolioMemoryProvider *folio_GetProvider(void);
 
+/**
+ * Basic memory allocation.  Memory contents may be undetermined state, not necessarily 0.
+ */
 void * folio_Allocate(const size_t length);
 
 /**
- * Allocates the memory and zeros it
- */
-void * folio_AllocateAndZero(const size_t length);
-
-/**
- * Associates a finalizer with the memory.  The allocator will call
- * the finalizer when it is about to release the last reference to the memory.
+ * Allocate memory with a finalizer callback that will be executed when the
+ * last reference to the memory is released.
  *
  * Example
  * <code>
@@ -75,14 +70,42 @@ void * folio_AllocateAndZero(const size_t length);
  * QueueReader *
  * queueReader_Create(int queueNumber)
  * {
- *    QueueReader *reader = folio_AllocateAndZero(sizeof(QueueReader));
- *    folio_SetFinalizer(reader, _finalizer);
+ *    QueueReader *reader = folio_AllocateWithFinalizer(sizeof(QueueReader), _finalizer);
  *    reader->pqueue = packetQueue_Create(128, 1024);
  *   return reader;
  * }
  * </code>
+ *
+ * @param length The amount of memory to allocate
+ * @param fini The finalizer to call on last reference release (may be NULL)
  */
-void folio_SetFinalizer(void *memory, Finalizer fini);
+void * folio_AllocateWithFinalizer(const size_t length, Finalizer fini);
+
+/**
+ * Allocates the memory and zeros it
+ *
+ * Example
+ * <code>
+ * static void
+ * _finalizer(void *memory)
+ * {
+ *    QueueReader *reader = memory;
+ *    packetQueue_Release(&reader->pqueue);
+ * }
+ *
+ * QueueReader *
+ * queueReader_Create(int queueNumber)
+ * {
+ *    QueueReader *reader = folio_AllocateAndZero(sizeof(QueueReader), _finalizer);
+ *    reader->pqueue = packetQueue_Create(128, 1024);
+ *   return reader;
+ * }
+ * </code>
+ *
+ * @param length The amount of memory to allocate
+ * @param fini The finalizer to call on last reference release (may be NULL)
+ */
+void * folio_AllocateAndZero(const size_t length, Finalizer fini);
 
 /**
  * Obtain a reference count to the memory.  Use folio_Release() to free it.

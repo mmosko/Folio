@@ -32,7 +32,8 @@
 
 /**
  * Debug memory allocator with checks for underflow & overflow
- * plus stack backtraces
+ * plus stack backtraces.  Release the reference with
+ * folioMemoryProvider_ReleaseProvider().
  */
 FolioMemoryProvider * folioStdProvider_Create(size_t poolSize);
 

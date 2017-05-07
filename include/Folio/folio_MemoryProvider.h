@@ -31,25 +31,28 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/**
- * The finalizer, if set, is called when the last reference to
- * the memory is released.
- */
-typedef void (*Finalizer)(void *memory);
+#include <Folio/folio_Finalizer.h>
 
 typedef struct folioMemoryProvider_memory_provider FolioMemoryProvider;
 
 struct folioMemoryProvider_memory_provider {
 	/**
 	 * Release the entire memory pool.  Will release even if there are outstanding allocations.
+	 *
+	 * @return true If this was the last release and the memory was freed
+	 * @return false If there are still outstanding acquires
 	 */
-	void (*releaseProvider)(FolioMemoryProvider **providerPtr);
+	bool (*releaseProvider)(FolioMemoryProvider **providerPtr);
 
-	void * (*allocate)(FolioMemoryProvider *provider, const size_t length);
-	void * (*allocateAndZero)(FolioMemoryProvider *provider, const size_t length);
+	/**
+	 * Acquires a reference count to the provider.
+	 */
+	FolioMemoryProvider * (*acquireProvider)(const FolioMemoryProvider *provider);
+
+	void * (*allocate)(FolioMemoryProvider *provider, const size_t length, Finalizer fini);
+	void * (*allocateAndZero)(FolioMemoryProvider *provider, const size_t length, Finalizer fini);
 	void * (*acquire)(FolioMemoryProvider *provider, const void * memory);
 	size_t (*length)(const FolioMemoryProvider *provider, const void *memory);
-	void (*setFinalizer)(FolioMemoryProvider *provider, void *memory, Finalizer fini);
 	void (*release)(FolioMemoryProvider *provider, void **memoryPtr);
 
 	/**
@@ -69,6 +72,11 @@ struct folioMemoryProvider_memory_provider {
 	 * Report statistics about the allocator
 	 */
 	void (*report)(const FolioMemoryProvider *provider, FILE *stream);
+
+	/**
+	 * dump information about a specific allocation to the specified stream.
+	 */
+	void (*display)(const FolioMemoryProvider *provider, FILE *stream, const void *memory);
 
 	/**
 	 * Sanity checks on the allocated memory
@@ -104,23 +112,28 @@ struct folioMemoryProvider_memory_provider {
 	 * have taken place it will not trap until the next allocation.
 	 */
 	void (*setAvailableMemory)(FolioMemoryProvider *provider, size_t bytes);
+
+	void *poolState;
 };
 
 #define folioMemoryProvider_SetAvailableMemory(provider, maximum) (provider)->setAvailableMemory(provider, maximum)
-#define folioMemoryProvider_Allocate(provider, length) (provider)->allocate(provider, length)
-#define folioMemoryProvider_AllocateAndZero(provider, length) (provider)->allocateAndZero(provider, length);
-#define folioMemoryProvider_SetFinalizer(provider, memory, fini) (provider)->setFinalizer(provider, memory, fini)
+#define folioMemoryProvider_Allocate(provider, length, fini) (provider)->allocate(provider, length, fini)
+#define folioMemoryProvider_AllocateAndZero(provider, length, fini) (provider)->allocateAndZero(provider, length, fini);
 #define folioMemoryProvider_Acquire(provider, memory) (provider)->acquire(provider, memory)
 #define folioMemoryProvider_Release(provider, memoryPtr) (provider)->release(provider, memoryPtr)
 #define folioMemoryProvider_Length(provider, memory) (provider)->length(provider, memory)
 #define folioMemoryProvider_Report(provider, stream) (provider)->report(provider, stream)
+#define folioMemoryProvider_Display(provider, stream, memory) (provider)->display(provider, stream, memory)
+
 #define folioMemoryProvider_Validate(provider, memory) (provider)->validate(provider, memory)
 #define folioMemoryProvider_OustandingReferences(provider) (provider)->acquireCount(provider)
 #define folioMemoryProvider_AllocatedBytes(provider) (provider)->allocationSize(provider)
 #define folioMemoryProvider_Lock(provider, memory) (provider)->lock(provider, memory)
 #define folioMemoryProvider_Unlock(provider, memory) (provider)->unlock(provider, memory)
 
-void folioMemoryProvider_ReleaseProvider(FolioMemoryProvider **providerPtr);
+bool folioMemoryProvider_ReleaseProvider(FolioMemoryProvider **providerPtr);
+
+#define folioMemoryProvider_AcquireProvider(provider) (provider)->acquireProvider(provider)
 
 /**
  * Tests if the current number of Acquires is equal to the expected reference count.

@@ -132,3 +132,15 @@ folio_Validate(const void *memory)
 	folioMemoryProvider_Validate(_provider, memory);
 }
 
+void
+folio_Lock(void *memory)
+{
+	folioMemoryProvider_Lock(_provider, memory);
+}
+
+void
+folio_Unlock(void *memory)
+{
+	folioMemoryProvider_Unlock(_provider, memory);
+}
+

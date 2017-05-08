@@ -109,6 +109,8 @@ folioLinkedList_Append(FolioLinkedList *list, const void *data)
 	trapIllegalValueIf(data == NULL, "Cannot store NULL in the list");
 
 	Entry *entry = entry_Create(data);
+
+	folio_Lock(list);
 	if (list->head == NULL) {
 		list->head = entry;
 		list->tail = entry;
@@ -119,6 +121,7 @@ folioLinkedList_Append(FolioLinkedList *list, const void *data)
 		list->tail->next = entry;
 		list->tail = entry;
 	}
+	folio_Unlock(list);
 }
 
 void *

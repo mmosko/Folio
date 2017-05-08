@@ -158,4 +158,19 @@ size_t folio_AllocatedBytes(void);
  */
 bool folio_TestRefCount(size_t expectedRefCount, FILE *stream, const char *format, ...);
 
+/**
+ * Locks the memory's spinlock.
+ *
+ * All memory allocations have a busy-wait spin lock available that uses
+ * only atomic operations to lock (not pthreads).  Should only be used for
+ * short locks.  Does not guarantee ordering and starvation may occur.
+ */
+void folio_Lock(void *memory);
+
+/**
+ * Unlocks the memory's spinlock.  The unlocker must have the same thread id
+ * as the locker.
+ */
+void folio_Unlock(void *memory);
+
 #endif /* FOLIO_H_ */

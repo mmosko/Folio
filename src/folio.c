@@ -43,13 +43,23 @@ folio_SetProvider(FolioMemoryProvider *provider)
 		folioMemoryProvider_ReleaseProvider(&_provider);
 	}
 
-	_provider = folioMemoryProvider_AcquireProvider(provider);
+	if (provider != NULL) {
+		_provider = folioMemoryProvider_AcquireProvider(provider);
+	} else {
+		_provider = NULL;
+	}
 }
 
 void
 folio_ReleaseProvider(void)
 {
-	_provider = NULL;
+	if (_provider != _defaultProvider) {
+		folioMemoryProvider_ReleaseProvider(&_provider);
+	} else {
+		// If trying to release the default provider, don't do it!  Just null it.
+		// The default provider is statically allocated and cannot be released.
+		_provider = NULL;
+	}
 }
 
 void

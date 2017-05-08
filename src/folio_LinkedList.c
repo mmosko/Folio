@@ -128,6 +128,8 @@ void *
 folioLinkedList_Remove(FolioLinkedList *list)
 {
 	void *data = NULL;
+
+	folio_Lock(list);
 	if (list->head != NULL) {
 		Entry *entry = list->head;
 		list->head = list->head->next;
@@ -140,6 +142,7 @@ folioLinkedList_Remove(FolioLinkedList *list)
 		data = folio_Acquire(entry_GetData(entry));
 		entry_Release(&entry);
 	}
+	folio_Unlock(list);
 
 	return data;
 }

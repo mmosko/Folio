@@ -240,7 +240,7 @@ LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, overrun, .event = &LongBowTrapUnexpecte
 	void *p = longBowTestCase_GetClipBoardData(testCase);
 	size_t length = folio_Length(p);
 
-	memset(p, 0, length + 1);
+	memset(p, 0xFF, length + 1);
 	folio_Validate(p);
 }
 
@@ -252,7 +252,7 @@ LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, underrun, .event = &LongBowTrapUnexpect
 	void *p2 = p - 1;
 	printf("memory (%p) overwriting %p\n", (void *) p, (void *) p2);
 
-	memset(p2, 0, 1);
+	memset(p2, 0xFF, 1);
 	folio_Validate(p);
 }
 

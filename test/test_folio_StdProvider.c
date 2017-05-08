@@ -52,7 +52,8 @@ LONGBOW_TEST_RUNNER_TEARDOWN(folio_StdProvider)
 
 LONGBOW_TEST_FIXTURE(Local)
 {
-    LONGBOW_RUN_TEST_CASE(Local, _allocate);
+	LONGBOW_RUN_TEST_CASE(Local, folioStdProvider_Create);
+	LONGBOW_RUN_TEST_CASE(Local, _allocate);
     LONGBOW_RUN_TEST_CASE(Local, _allocate_ZeroLength);
     LONGBOW_RUN_TEST_CASE(Local, _allocate_OutOfMemory);
 
@@ -79,6 +80,13 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(Local)
 	folio_SetAvailableMemory(SIZE_MAX);
 
 	return status;
+}
+
+LONGBOW_TEST_CASE(Local, folioStdProvider_Create)
+{
+	FolioMemoryProvider *provider = folioStdProvider_Create(SIZE_MAX);
+	folioMemoryProvider_Report(provider, stdout);
+	folioMemoryProvider_ReleaseProvider(&provider);
 }
 
 LONGBOW_TEST_CASE(Local, _allocate)
@@ -242,6 +250,8 @@ LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, underrun, .event = &LongBowTrapUnexpect
 
 	// wipe out part of magic2, but be sure to not corrupt the length
 	void *p2 = p - 1;
+	printf("memory (%p) overwriting %p\n", (void *) p, (void *) p2);
+
 	memset(p2, 0, 1);
 	folio_Validate(p);
 }

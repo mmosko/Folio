@@ -29,6 +29,7 @@
 
 #include <Folio/folio_Finalizer.h>
 #include <Folio/private/folio_Lock.h>
+#include <Folio/private/folio_Pool.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 
@@ -51,7 +52,8 @@
  * | ................ aligned ((sizeof(void *))) ............ |
  */
 typedef struct folio_header {
-	uint64_t xmagic1;
+	uint32_t xmagic1;
+	atomic_int xreferenceCount;
 
 	// The requested allocation length
 	size_t xrequestedLength;
@@ -60,18 +62,18 @@ typedef struct folio_header {
 
 	FolioLock *xlock;
 
-	atomic_int xreferenceCount;
+	uint8_t xheaderGuardLength;
+	uint8_t xtrailerGuardLength;
+	uint16_t xproviderDataLength;
 
-	size_t xproviderDataLength;
-	unsigned xheaderGuardLength;
-	unsigned xtrailerGuardLength;
-
-	uint64_t xmagic2;
+	uint32_t xmagic2;
 } FolioHeader __attribute__((aligned));
 
 typedef struct folio_trailer {
-	uint64_t magic3;
+	uint32_t magic3;
 } FolioTrailer __attribute__((aligned));
+
+FolioHeader *folioHeader_GetMemoryHeader(const void *memory, const FolioPool *pool);
 
 /**
  * Initialize a header.  The header must exist in allocated memory.
@@ -98,7 +100,7 @@ typedef struct folio_trailer {
  * @param fini The finalizer for the memory (may be NULL)
  * @param guardLength The number of guard bytes past magic2 (may be 0)
  */
-void folioHeader_Initialize(FolioHeader *header, uint64_t magic, size_t requestedLength,
+void folioHeader_Initialize(FolioHeader *header, uint32_t magic, size_t requestedLength,
 		const FolioLock *lock, int refCount, size_t providerHeaderLength, Finalizer fini,
 		size_t headerGuardLength, size_t trailerGuardLength);
 
@@ -157,13 +159,19 @@ size_t folioHeader_ProviderDataLength(const FolioHeader *header);
  */
 size_t folioHeader_GetTrailerGuardLength(const FolioHeader *header);
 
+FolioTrailer *folioHeader_GetTrailer(const FolioHeader *header, const FolioPool *pool);
+
+const uint8_t *folioHeader_GetHeaderGuardAddress(const FolioHeader *header);
+
+const uint8_t *folioHeader_GetTrailerGuardAddress(const FolioHeader *header, const FolioPool *pool);
+
 /**
  * Compare the two magic fields in the header with the given value.
  *
  * @return true If both fields match
  * @return false If one or both mismatch
  */
-bool folioHeader_CompareMagic(const FolioHeader *header, const uint64_t magic);
+bool folioHeader_CompareMagic(const FolioHeader *header, const uint32_t magic);
 
 /**
  * Invalidate the header so it will not pass the folioHeader_CompareMagic() test with

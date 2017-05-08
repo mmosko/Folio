@@ -12,6 +12,7 @@
 #include "../src/folio_DebugProvider.c"
 
 #include <Folio/private/folio_Pool.h>
+#include <Folio/private/folio_Header.h>
 
 LONGBOW_TEST_RUNNER(folio_DebugProvider)
 {
@@ -204,6 +205,7 @@ LONGBOW_TEST_CASE(Local, backtrace)
 typedef struct corrupt_data {
 	FolioMemoryProvider *provider;
 	void *memory;
+	size_t length;
 } CorruptData;
 
 static CorruptData _data;
@@ -217,7 +219,8 @@ LONGBOW_TEST_FIXTURE(CorruptMemory)
 LONGBOW_TEST_FIXTURE_SETUP(CorruptMemory)
 {
 	_data.provider = folioDebugProvider_Create(SIZE_MAX);
-	_data.memory = _allocate(_data.provider, 64, NULL);
+	_data.length = 64;
+	_data.memory = _allocate(_data.provider, _data.length, NULL);
 
 	return LONGBOW_STATUS_SUCCEEDED;
 }
@@ -229,15 +232,15 @@ LONGBOW_TEST_FIXTURE_TEARDOWN(CorruptMemory)
 	// Because we intentionally corrupt the memory, we cannot use
 	// normal release.  We cleanup here manually
 
-	FolioPool *pool = (FolioPool *) _data.provider;
-	FolioHeader *h = (FolioHeader *) ((uint8_t *) _data.memory - pool->headerAlignedLength);
-	size_t requestLength = folioHeader_GetRequestedLength(h);
+	FolioPool *pool = (FolioPool *) _data.provider->poolState;
+	FolioHeader *h = folioHeader_GetMemoryHeader(_data.memory, pool);
+	free(h);
 
 	DebugState *state = (DebugState *) folioInternalProvider_GetProviderState(_data.provider);
 
 	state->stats.outstandingAllocs--;
 	state->stats.outstandingAcquires--;
-	pool->currentAllocation -= requestLength;
+	pool->currentAllocation -= _data.length;
 
 	if (!folio_TestRefCount(0, stdout, "Memory leak in %s\n", longBowTestCase_GetFullName(testCase))) {
 		folio_Report(stdout);
@@ -253,16 +256,27 @@ LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, overrun, .event = &LongBowTrapUnexpecte
 {
 	size_t length = _length(_data.provider, _data.memory);
 
-	memset(_data.memory, 0, length + 1);
+	memset(_data.memory, 0xFF, length + 1);
 	_validate(_data.provider, _data.memory);
+
+	// if we get there it failed
+	printf("*** The memory should have overrun\n");
+	folioInternalProvider_Display(_data.provider, _data.memory, stdout);
 }
 
 LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, underrun, .event = &LongBowTrapUnexpectedStateEvent)
 {
 	// wipe out part of magic2, but be sure to not corrupt the length
 	void *p2 = _data.memory - 1;
-	memset(p2, 0, 1);
+
+	printf("memory (%p) overwriting %p\n", (void *) _data.memory, (void *) p2);
+
+	memset(p2, 0xFF, 1);
 	_validate(_data.provider, _data.memory);
+
+	// if we get there it failed
+	printf("*** The memory should have underrun\n");
+	folioInternalProvider_Display(_data.provider, _data.memory, stdout);
 }
 
 /*****************************************************/

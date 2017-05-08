@@ -32,7 +32,7 @@
 
 #include <Folio/private/folio_InternalList.h>
 
-#define DEBUG 1
+//#define DEBUG 1
 
 /* ********************************************************************
  * Internal linked list for storing allocations

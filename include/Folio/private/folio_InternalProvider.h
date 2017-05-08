@@ -28,6 +28,7 @@
 #define SRC_PRIVATE_FOLIO_INTERNALPROVIDER_H_
 
 #include <Folio/folio.h>
+#include <Folio/private/folio_Pool.h>
 #include <stdio.h>
 
 /**
@@ -146,5 +147,10 @@ void folioInternalProvider_Report(const FolioMemoryProvider *provider, FILE *str
  * Does not display the actual memory, only header information.
  */
 void folioInternalProvider_Display(const FolioMemoryProvider *provider, const void *memory, FILE *stream);
+
+/**
+ * Given a provider, return the Pool memory (which may not be contiguous with the provider).
+ */
+FolioPool *folioPool_GetFromProvider(const FolioMemoryProvider *provider);
 
 #endif /* SRC_PRIVATE_FOLIO_INTERNALPROVIDER_H_ */

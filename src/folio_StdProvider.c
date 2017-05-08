@@ -34,6 +34,7 @@
 #include <Folio/private/folio_Lock.h>
 #include <Folio/private/folio_InternalProvider.h>
 #include <Folio/private/folio_Pool.h>
+#include <Folio/private/folio_Header.h>
 
 static FolioMemoryProvider *_acquireProvider(const FolioMemoryProvider *provider);
 static bool _releaseProvider(FolioMemoryProvider **providerPtr);
@@ -63,35 +64,35 @@ typedef struct stats {
 } _Stats;
 
 
-#define GuardLength (sizeof(void *))
-
 /*
  * Our local storage for the static provider
  */
 typedef struct static_storage {
 	FolioPool pool;
 	_Stats stats;
+} StaticStorage;
 
-	// This ensures we have atleast 4 bytes of guard, it may be more
-	uint8_t guard[GuardLength];
-} __attribute__((aligned)) StaticStorage;
-
-struct complete_header {
-	FolioMemoryProvider provider;
-	StaticStorage storage;
+// Struct only used to compute its size
+struct complete_provider {
+	FolioMemoryProvider dummy1;
+	StaticStorage dummy2;
 } __attribute__((aligned));
 
-#define StdHeaderMagic 0x05fd095c69493bf8ULL
-#define AlignedLength sizeof(struct complete_header)
+struct complete_header {
+	FolioHeader dummy1;
+} __attribute__((aligned));
+
+#define StdHeaderMagic 0x69493bf8UL
 #define GuardPattern 0xE0
 
+// Allocate the memory for the default static provider
 static StaticStorage _storage = {
 		.pool = {
 				.internalMagic1 = _internalMagic,
 				.headerMagic = StdHeaderMagic,
 				.providerStateLength = sizeof(_Stats),
 				.providerHeaderLength = 0,
-				.headerGuardLength = GuardLength,
+				.headerGuardLength = 0,
 				.headerAlignedLength = sizeof(FolioHeader),
 				.trailerAlignedLength = sizeof(FolioTrailer),
 				.guardPattern = GuardPattern,
@@ -106,9 +107,8 @@ static StaticStorage _storage = {
 				.outstandingAllocs = 0,
 				.outstandingAcquires = 0,
 				.outOfMemoryCount = 0
-		},
-		.guard = { GuardPattern, 0xE1, 0xE2, 0xE3 }
-	};
+		}
+};
 
 FolioMemoryProvider FolioStdProvider = {
 		.acquireProvider = _acquireProvider,

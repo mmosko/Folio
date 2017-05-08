@@ -39,9 +39,7 @@
 #include <stdarg.h>
 #include <stdatomic.h>
 
-#define DEBUG_ALLOC_LIST 0
-
-static uint32_t _backtrace_depth = 10;
+static uint32_t _backtrace_depth = 16;
 static uint32_t _backtrace_offset = 2;
 
 static FolioMemoryProvider *_acquireProvider(const FolioMemoryProvider *provider);

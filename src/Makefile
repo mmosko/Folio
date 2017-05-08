@@ -22,12 +22,12 @@ LDFLAGS      = -rdynamic
 LIBS         = -L$(BUILDDIR) -llongbow -llongbow-ansiterm
  
 SRC = $(wildcard *.c) $(wildcard private/*.c)
-HDR = $(wildcard $(INCLUDEDIR)/Folio/*.h)
+HDR = $(wildcard $(INCLUDEDIR)/Folio/*.h) $(wildcard $(INCLUDEDIR)/Folio/private/*.h)
 OBJ = $(addprefix $(BUILDDIR)/,$(SRC:.c=.o))
 
 lib: $(BUILDDIR)/$(TARGET) $(BUILDDIR)/$(STATIC)
 
-$(OBJ): $(BUILDDIR)/%.o : %.c $(INCLUDEDIR)/Folio/%.h
+$(OBJ): $(BUILDDIR)/%.o : %.c $(HDR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(BUILDDIR)/$(TARGET): $(BUILDDIR)/$(TARGET_VER)
@@ -54,4 +54,6 @@ remove:
 	rm -rf $(PREFIX)/include/Folio
 	rm -f $(PREFIX)/lib/libfolio.a $(PREFIX)/lib/libfolio.so*
 
+depend:
+	makedepend -- $(CFLAGS) -- $(SRC) -f -
 	

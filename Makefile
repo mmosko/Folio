@@ -82,6 +82,13 @@ coverage:
 	$(MAKE) -C coverage coverage
 
 
+#####
+# Dependencies
+
+depend:
+	$(MAKE) -C src depend
+
+#####
 #
 #   Copyright (c) 2017, Palo Alto Research Center
 #   All rights reserved.

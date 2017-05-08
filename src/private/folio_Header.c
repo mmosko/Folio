@@ -31,8 +31,17 @@
 #include <stdatomic.h>
 #include <inttypes.h>
 
+FolioHeader *
+folioHeader_GetMemoryHeader(const void *memory, const FolioPool *pool)
+{
+	size_t length = pool->headerAlignedLength;
+	trapUnexpectedStateIf(memory < (void *) length, "Invalid memory address (%p)", memory);
+	return (FolioHeader *) ((uint8_t *) memory - pool->headerAlignedLength);
+}
+
+
 void
-folioHeader_Initialize(FolioHeader *header, uint64_t magic, size_t requestedLength, const FolioLock *lock,
+folioHeader_Initialize(FolioHeader *header, uint32_t magic, size_t requestedLength, const FolioLock *lock,
 		int refCount, size_t providerDataLength, Finalizer fini, size_t headerGuardLength, size_t trailerGuardLength)
 {
 	header->xmagic1 = magic;
@@ -102,7 +111,7 @@ folioHeader_ProviderDataLength(const FolioHeader *header)
 }
 
 bool
-folioHeader_CompareMagic(const FolioHeader *header, const uint64_t magic)
+folioHeader_CompareMagic(const FolioHeader *header, const uint32_t magic)
 {
 	assertNotNull(header, "header must be non-null");
 	return (header->xmagic1 == magic && header->xmagic2 == magic);
@@ -145,18 +154,18 @@ folioHeader_GetTrailerGuardLength(const FolioHeader *header)
 	return header->xtrailerGuardLength;
 }
 
-static const uint8_t *
-_getGuard(const FolioHeader *header)
-{
-	size_t guardOffset = sizeof(FolioHeader) + header->xproviderDataLength;
-	const uint8_t *guard = (const uint8_t *) header + guardOffset;
-	return guard;
-}
-
+//static const uint8_t *
+//_getGuard(const FolioHeader *header)
+//{
+//	size_t guardOffset = sizeof(FolioHeader) + header->xproviderDataLength;
+//	const uint8_t *guard = (const uint8_t *) header + guardOffset;
+//	return guard;
+//}
+//
 char *
 folioHeader_ToString(const FolioHeader *header)
 {
-	const uint8_t *guard = _getGuard(header);
+	const uint8_t *guard = folioHeader_GetHeaderGuardAddress(header);
 	char guardString[header->xheaderGuardLength * 2 + 1];
 	guardString[0] = 0;
 
@@ -165,8 +174,8 @@ folioHeader_ToString(const FolioHeader *header)
 	}
 
 	char *str;
-	asprintf(&str, "{Header (%p) : mgk1 %016" PRIx64 ", len %zu, fini %p, lock %p, refCount %d, "
-			"pvdrLen %zu, hdrgrdlen %u, trlgrdlen %u, mgk2 %016" PRIx64 ", grd (%p) [0x%s]}",
+	asprintf(&str, "{Header (%p) : mgk1 0x%08x, len %zu, fini %p, lock %p, refCount %d, "
+			"pvdrLen %u, hdrgrdlen %u, trlgrdlen %u, mgk2 0x%08x, grd (%p) [0x%s]}",
 			(void *) header,
 			header->xmagic1,
 			header->xrequestedLength,
@@ -198,7 +207,7 @@ folioTrailer_ToString(const FolioTrailer *trailer, size_t guardLength)
 	}
 
 	char *str;
-	asprintf(&str, "{Trailer (%p) : mgk3 %016" PRIx64 ", grdLen %zu, grd (%p) [0x%s]}",
+	asprintf(&str, "{Trailer (%p) : mgk3 0x%08x, grdLen %zu, grd (%p) [0x%s]}",
 			(void *) trailer,
 			trailer->magic3,
 			guardLength,
@@ -206,5 +215,31 @@ folioTrailer_ToString(const FolioTrailer *trailer, size_t guardLength)
 			guardString);
 
 	return str;
+}
+
+const uint8_t *
+folioHeader_GetHeaderGuardAddress(const FolioHeader *header)
+{
+	size_t guardOffset = sizeof(FolioHeader) + header->xproviderDataLength;
+	const uint8_t *guard = (uint8_t *) header + guardOffset;
+	return guard;
+}
+
+FolioTrailer *
+folioHeader_GetTrailer(const FolioHeader *header, const FolioPool *pool)
+{
+	FolioTrailer *trailer = (FolioTrailer *)((uint8_t *) header
+								+ pool->headerAlignedLength
+								+ folioHeader_GetRequestedLength(header)
+								+ folioHeader_GetTrailerGuardLength(header));
+	return trailer;
+}
+
+const uint8_t *
+folioHeader_GetTrailerGuardAddress(const FolioHeader *header, const FolioPool *pool)
+{
+	size_t guardOffset = pool->headerAlignedLength + folioHeader_GetRequestedLength(header);
+	const uint8_t *guard = (uint8_t *) header + guardOffset;
+	return guard;
 }
 

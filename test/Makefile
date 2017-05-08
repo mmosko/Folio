@@ -13,13 +13,21 @@ LDFLAGS	= -rdynamic -Wl,-rpath,$(BUILDABSDIR) -Wl,-rpath,$(LONGBOW_DIR)/lib
 #LDFLAGS	= -rdynamic
 LIBS	= -L$(BUILDABSDIR) -L$(LONGBOW_DIR)/lib -lpthread -lfolio -llongbow -llongbow-tap
 
-SRC = $(wildcard *.c)
-EXE = $(addprefix $(BUILDDIR)/,$(basename $(SRC)))
 
-$(EXE) : $(BUILDDIR)/test_% : test_%.c $(SOURCEDIR)/%.c $(INCLUDEDIR)/Folio/%.h
+PRIV_SRC = $(wildcard private/*.c)
+PRIV_EXE = $(addprefix $(BUILDDIR)/,$(basename $(PRIV_SRC)))
+
+$(PRIV_EXE) : $(BUILDDIR)/private/test_% : private/test_%.c $(SOURCEDIR)/private/%.c $(HDR)
 	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LIBS)
 
-test: $(info $$EXE is [$(EXE)]) $(EXE)
+SRC = $(wildcard *.c)
+HDR = $(wildcard $(INCLUDEDIR)/Folio/*.h) $(wildcard $(INCLUDEDIR)/Folio/private/*.h)
+EXE = $(addprefix $(BUILDDIR)/,$(basename $(SRC)))
+
+$(EXE) : $(BUILDDIR)/test_% : test_%.c $(SOURCEDIR)/%.c $(HDR)
+	$(CC) $(CFLAGS) $< -o $@ $(LDFLAGS) $(LIBS)
+
+test: $(EXE) $(PRIV_EXE)
 
 clean:
 	rm -rf $(EXE)
@@ -28,6 +36,6 @@ clean:
 # execute tests
 # You need to use liblongbow-tap for this to work
 
-check: $(info $$EXE = [$(EXE)]) $(EXE)
+check: $(PRIV_EXE) $(EXE)
 	prove --ignore-exit $^ 2> /dev/null
 

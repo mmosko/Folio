@@ -86,7 +86,7 @@ folioLock_FlagLock(atomic_flag *flag)
 	bool prior;
 	do {
 		prior = atomic_flag_test_and_set(flag);
-	} while (!prior);
+	} while (prior);
 
 }
 void

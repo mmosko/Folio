@@ -1,7 +1,12 @@
 .PHONY: all lib builddir longbow clean test check coverage install remove
 
+include settings.local
+
 # You can override this on the command-line: `make PREFIX=/tmp/folio intall`
-export PREFIX=/usr/local
+# or by putting the setting in the file 'settings.local' which is not part
+# of the Folio distribution (i.e. it won't be overwritten).
+PREFIX ?= /usr/local
+export PREFIX
 
 SHELL = /bin/sh
 CC    = gcc

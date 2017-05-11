@@ -1,6 +1,7 @@
 .PHONY: all lib builddir longbow clean test check coverage install remove
 
-include settings.local
+# Conditionally include local settings if the file exists
+-include settings.local
 
 # You can override this on the command-line: `make PREFIX=/tmp/folio intall`
 # or by putting the setting in the file 'settings.local' which is not part

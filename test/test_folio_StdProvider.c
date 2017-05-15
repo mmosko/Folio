@@ -53,6 +53,7 @@ LONGBOW_TEST_RUNNER_TEARDOWN(folio_StdProvider)
 LONGBOW_TEST_FIXTURE(Local)
 {
 	LONGBOW_RUN_TEST_CASE(Local, folioStdProvider_Create);
+	LONGBOW_RUN_TEST_CASE(Local, folioStdProvider_Static);
 	LONGBOW_RUN_TEST_CASE(Local, _allocate);
     LONGBOW_RUN_TEST_CASE(Local, _allocate_ZeroLength);
     LONGBOW_RUN_TEST_CASE(Local, _allocate_OutOfMemory);
@@ -87,6 +88,12 @@ LONGBOW_TEST_CASE(Local, folioStdProvider_Create)
 	FolioMemoryProvider *provider = folioStdProvider_Create(SIZE_MAX);
 	folioMemoryProvider_Report(provider, stdout);
 	folioMemoryProvider_ReleaseProvider(&provider);
+}
+
+LONGBOW_TEST_CASE(Local, folioStdProvider_Static)
+{
+	FolioMemoryProvider *provider = &FolioStdProvider;
+	folioMemoryProvider_Report(provider, stdout);
 }
 
 LONGBOW_TEST_CASE(Local, _allocate)
@@ -199,9 +206,13 @@ LONGBOW_TEST_FIXTURE(CorruptMemory)
     LONGBOW_RUN_TEST_CASE(CorruptMemory, underrun);
 }
 
+static const int _corruptLength = 64;
+
 LONGBOW_TEST_FIXTURE_SETUP(CorruptMemory)
 {
-	void *p = folio_Allocate(64);
+	void *p = folio_Allocate(_corruptLength);
+	memset(p, 0xA4, _corruptLength);
+
 	longBowTestCase_SetClipBoardData(testCase, p);
 
 	return LONGBOW_STATUS_SUCCEEDED;
@@ -254,6 +265,11 @@ LONGBOW_TEST_CASE_EXPECTS(CorruptMemory, underrun, .event = &LongBowTrapUnexpect
 
 	memset(p2, 0xFF, 1);
 	folio_Validate(p);
+
+	// if we get there it failed
+	printf("*** The memory should have underrun\n");
+	folioMemoryProvider_Display(&FolioStdProvider, (const uint8_t *) p, stdout);
+	fflush(stdout);
 }
 
 /*****************************************************/

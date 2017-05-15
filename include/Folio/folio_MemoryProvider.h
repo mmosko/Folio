@@ -76,7 +76,7 @@ struct folioMemoryProvider_memory_provider {
 	/**
 	 * dump information about a specific allocation to the specified stream.
 	 */
-	void (*display)(const FolioMemoryProvider *provider, FILE *stream, const void *memory);
+	void (*display)(const FolioMemoryProvider *provider, const void *memory, FILE *stream);
 
 	/**
 	 * Sanity checks on the allocated memory
@@ -123,7 +123,7 @@ struct folioMemoryProvider_memory_provider {
 #define folioMemoryProvider_Release(provider, memoryPtr) (provider)->release(provider, memoryPtr)
 #define folioMemoryProvider_Length(provider, memory) (provider)->length(provider, memory)
 #define folioMemoryProvider_Report(provider, stream) (provider)->report(provider, stream)
-#define folioMemoryProvider_Display(provider, stream, memory) (provider)->display(provider, stream, memory)
+#define folioMemoryProvider_Display(provider, memory, stream) (provider)->display(provider, memory, stream)
 
 #define folioMemoryProvider_Validate(provider, memory) (provider)->validate(provider, memory)
 #define folioMemoryProvider_OustandingReferences(provider) (provider)->acquireCount(provider)

@@ -136,7 +136,9 @@ folioHeader_ExecuteFinalizer(FolioHeader *header, void *memory)
 {
 	assertNotNull(header, "header must be non-null");
 	if (header->xfini) {
+		header->xinFinalizer = true;
 		header->xfini(memory);
+		header->xinFinalizer = false;
 	}
 }
 
@@ -174,7 +176,7 @@ folioHeader_ToString(const FolioHeader *header)
 	}
 
 	char *str;
-	asprintf(&str, "{Header (%p) : mgk1 0x%08x, len %zu, fini %p, lock %p, refCount %d, "
+	asprintf(&str, "{Header (%p) : mgk1 0x%08x, len %zu, fini %p, lock %p, refCount %d, inFini %d, "
 			"pvdrLen %u, hdrgrdlen %u, trlgrdlen %u, mgk2 0x%08x, grd (%p) [0x%s]}",
 			(void *) header,
 			header->xmagic1,
@@ -182,6 +184,7 @@ folioHeader_ToString(const FolioHeader *header)
 			header->xfini,
 			(void *) header->xlock,
 			atomic_load(&header->xreferenceCount),
+			header->xinFinalizer,
 			header->xproviderDataLength,
 			header->xheaderGuardLength,
 			header->xtrailerGuardLength,
@@ -243,3 +246,8 @@ folioHeader_GetTrailerGuardAddress(const FolioHeader *header, const FolioPool *p
 	return guard;
 }
 
+bool
+folioHeader_InFinalizer(const FolioHeader *header)
+{
+	return header->xinFinalizer;
+}

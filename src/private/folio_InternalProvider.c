@@ -35,8 +35,6 @@
 #include <Folio/private/folio_Header.h>
 #include <Folio/private/folio_Pool.h>
 
-//#define DEBUG 1
-
 /* ****************************************************** */
 
 
@@ -146,6 +144,8 @@ folioInternalProvider_Create(const FolioMemoryProvider *template, size_t memoryS
 	pool->providerHeaderLength = providerHeaderLength;
 
 	size_t headerLengthNoGuard = sizeof(FolioHeader) + providerHeaderLength;
+
+	printf("sizeof(FolioHeader) = %zu\n", sizeof(FolioHeader));
 
 	// If the providerHeaderLength is non-zero, we must have at least 1 byte of guard, otherwise
 	// we cannot detect a buffer underrun
@@ -412,7 +412,7 @@ _validateInternal(FolioPool *pool, const FolioHeader *header)
 {
 	if (_verifyHeader(pool, header)) {
 		int refcount = folioHeader_ReferenceCount(header);
-		if (refcount == 0) {
+		if (refcount == 0 && !folioHeader_InFinalizer(header)) {
 			char *headerString = folioHeader_ToString(header);
 			printf("\n\nHeader: %s\n", headerString);
 			free(headerString);
@@ -428,8 +428,6 @@ _validateInternal(FolioPool *pool, const FolioHeader *header)
 			free(trailerString);
 
 			size_t totalLength = _computeTotalLength(pool, folioHeader_GetRequestedLength(header), folioHeader_GetTrailerGuardLength(header));
-
-
 			longBowDebug_MemoryDump((const char *) header, totalLength);
 			trapUnexpectedState("Memory: invalid trailer (memory overrun)");
 		}
@@ -651,6 +649,11 @@ folioInternalProvider_Display(const FolioMemoryProvider *provider, const void *m
 			(void *) memory,
 			headerString,
 			trailerString);
+
+#if DEBUG
+	size_t totalLength = _computeTotalLength(pool, folioHeader_GetRequestedLength(header), folioHeader_GetTrailerGuardLength(header));
+	longBowDebug_MemoryDump(header, totalLength);
+#endif
 
 	free(trailerString);
 	free(headerString);

@@ -51,7 +51,7 @@
  * | sizeof(FolioHeader) | providerHeaderLength | guardLength |
  * | ................ aligned ((sizeof(void *))) ............ |
  */
-typedef struct folio_header {
+typedef struct __attribute__((__packed__)) folio_header {
 	uint32_t xmagic1;
 	atomic_int xreferenceCount;
 
@@ -66,8 +66,13 @@ typedef struct folio_header {
 	uint8_t xtrailerGuardLength;
 	uint16_t xproviderDataLength;
 
+	// Set to true when executing the finalizer after the last release.  This
+	// will happen when the refcount is 0, which is normally an invalid state except
+	// if this flag is set.
+	bool xinFinalizer;
+
 	uint32_t xmagic2;
-} FolioHeader __attribute__((aligned));
+} FolioHeader;
 
 typedef struct folio_trailer {
 	uint32_t magic3;
@@ -119,6 +124,14 @@ int folioHeader_IncrementReferenceCount(FolioHeader *header);
  * @return The prior reference count before decrement.
  */
 int folioHeader_DecrementReferenceCount(FolioHeader *header);
+
+/**
+ * Determine if we are currently executing the user's finalier for this memory block.
+ *
+ * @return true We are inside the finalizer
+ * @return false Outside the finalizer
+ */
+bool folioHeader_InFinalizer(const FolioHeader *header);
 
 /**
  * The number of bytes requested by the user and available in this allocation.

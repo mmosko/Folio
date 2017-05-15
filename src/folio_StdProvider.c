@@ -45,6 +45,7 @@ static void * _acquire(FolioMemoryProvider *provider, const void *memory);
 static size_t _length(const FolioMemoryProvider *provider, const void *memory);
 static void _release(FolioMemoryProvider *provider, void **memoryPtr);
 static void _report(const FolioMemoryProvider *provider, FILE *stream);
+static void _display(const FolioMemoryProvider *provider, const void *memory, FILE *stream);
 static void _validate(const FolioMemoryProvider *provider, const void *memory);
 static size_t _acquireCount(const FolioMemoryProvider *provider);
 static size_t _allocationSize(const FolioMemoryProvider *provider);
@@ -78,12 +79,13 @@ struct complete_provider {
 	StaticStorage dummy2;
 } __attribute__((aligned));
 
-struct complete_header {
+struct aligned_header {
 	FolioHeader dummy1;
 } __attribute__((aligned));
 
 #define StdHeaderMagic 0x69493bf8UL
 #define GuardPattern 0xE0
+#define GuardLength (sizeof(struct aligned_header) - sizeof(FolioHeader))
 
 // Allocate the memory for the default static provider
 static StaticStorage _storage = {
@@ -92,8 +94,8 @@ static StaticStorage _storage = {
 				.headerMagic = StdHeaderMagic,
 				.providerStateLength = sizeof(_Stats),
 				.providerHeaderLength = 0,
-				.headerGuardLength = 0,
-				.headerAlignedLength = sizeof(FolioHeader),
+				.headerGuardLength = GuardLength,
+				.headerAlignedLength = sizeof(struct aligned_header),
 				.trailerAlignedLength = sizeof(FolioTrailer),
 				.guardPattern = GuardPattern,
 				.allocationLock = ATOMIC_FLAG_INIT,
@@ -119,13 +121,14 @@ FolioMemoryProvider FolioStdProvider = {
 		.length = _length,
 		.release = _release,
 		.report = _report,
+		.display = _display,
 		.validate = _validate,
 		.acquireCount = _acquireCount,
 		.allocationSize = _allocationSize,
 		.setAvailableMemory = _setAvailableMemory,
 		.lock = _lock,
 		.unlock = _unlock,
-		.poolState = &_storage
+		.poolState = &_storage,
 };
 
 /* ********************************************************** */
@@ -237,10 +240,18 @@ _report(const FolioMemoryProvider *provider, FILE *stream)
 	memcpy(&copy, stats, sizeof(_Stats));
 	folioLock_FlagUnlock(&stats->lock);
 
-	fprintf(stream, "\nMemoryDebugAlloc: outstanding allocs %zu acquires %zu, currentAllocation %zu\n\n",
+	fprintf(stream, "\nFolioStdProvider: outstanding allocs %zu acquires %zu, currentAllocation %zu\n\n",
 			copy.outstandingAllocs,
 			copy.outstandingAcquires,
 			folioInternalProvider_AllocationSize(provider));
+
+	folioInternalProvider_Report(provider, stream);
+}
+
+static void
+_display(const FolioMemoryProvider *provider, const void *memory, FILE *stream)
+{
+	folioInternalProvider_Display(provider, memory, stream);
 }
 
 static void

@@ -77,12 +77,10 @@ _finalize(void *memory)
 {
 	FolioLinkedList *list = memory;
 
-	folio_Lock(list);
 	while (!folioLinkedList_IsEmpty(list)) {
 		void *p = folioLinkedList_Remove(list);
 		folio_Release(&p);
 	}
-	folio_Unlock(list);
 }
 
 FolioLinkedList *

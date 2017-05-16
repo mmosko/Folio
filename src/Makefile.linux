@@ -1,0 +1,25 @@
+
+###########
+# Library setup
+
+VERSION := $(MAJOR).$(MINOR)
+STATIC := lib$(NAME).a
+TARGET := lib$(NAME).so
+TARGET_MAJ := $(TARGET).$(MAJOR)
+TARGET_VER := $(TARGET).$(VERSION)
+
+
+$(BUILDDIR)/$(TARGET): $(BUILDDIR)/$(TARGET_VER)
+	ldconfig -v -n -r $(BUILDDIR) .
+	ln -fs $(TARGET_MAJ) $(BUILDDIR)/$(TARGET)
+
+$(BUILDDIR)/$(TARGET_VER): $(OBJ)
+	$(CC) -shared $(LDFLAGS) -Wl,-soname,$(TARGET_MAJ) $^ -o $@
+
+install: lib
+	install -d $(PREFIX) $(PREFIX)/include/Folio $(PREFIX)/lib
+	install -p -t $(PREFIX)/include/Folio $(INCLUDEDIR)/Folio/*.h
+	install -p -t $(PREFIX)/lib $(BUILDDIR)/$(STATIC) $(BUILDDIR)/$(TARGET_VER)
+	ln -fs $(TARGET_VER) $(PREFIX)/lib/$(TARGET_MAJ)
+	ln -fs $(TARGET_MAJ) $(PREFIX)/lib/$(TARGET)
+

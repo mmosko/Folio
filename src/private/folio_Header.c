@@ -100,7 +100,7 @@ int
 folioHeader_ReferenceCount(const FolioHeader *header)
 {
 	assertNotNull(header, "header must be non-null");
-	return atomic_load(&header->xreferenceCount);
+	return atomic_load(&((FolioHeader *) header)->xreferenceCount);
 }
 
 size_t
@@ -183,7 +183,7 @@ folioHeader_ToString(const FolioHeader *header)
 			header->xrequestedLength,
 			header->xfini,
 			(void *) header->xlock,
-			atomic_load(&header->xreferenceCount),
+			atomic_load(&((FolioHeader *)header)->xreferenceCount),
 			header->xinFinalizer,
 			header->xproviderDataLength,
 			header->xheaderGuardLength,

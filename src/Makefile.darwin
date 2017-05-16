@@ -1,0 +1,23 @@
+
+###########
+# Library setup
+
+VERSION := $(MAJOR).$(MINOR)
+STATIC := lib$(NAME).a
+TARGET := lib$(NAME).dylib
+TARGET_VER := lib$(NAME).$(MAJOR).dylib
+
+$(BUILDDIR)/$(TARGET): $(BUILDDIR)/$(TARGET_VER)
+	ln -fs $^ $@
+
+$(BUILDDIR)/$(TARGET_VER): $(OBJ)
+	$(CC) $(CFLAGS) -dynamiclib -install_name "$(BUILDABSDIR)/$(TARGET_VER)" $(LIBS) \
+		-current_version $(VERSION) -compatibility_version $(VERSION) -o $(BUILDDIR)/$(TARGET_VER) $(OBJ)
+
+install: lib
+	install -d $(PREFIX) $(PREFIX)/include/Folio $(PREFIX)/lib
+	install -p $(INCLUDEDIR)/Folio/*.h $(PREFIX)/include/Folio
+	install -p $(BUILDDIR)/$(STATIC) $(BUILDDIR)/$(TARGET_VER) $(PREFIX)/lib
+	ln -fs $(TARGET_VER) $(PREFIX)/lib/$(TARGET)
+	install_name_tool -id $(PREFIX)/lib/$(TARGET_VER) $(PREFIX)/lib/$(TARGET_VER)
+

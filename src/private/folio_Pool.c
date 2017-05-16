@@ -55,7 +55,7 @@ folioPool_ToString(const FolioPool *pool)
 			locked,
 			pool->poolSize,
 			pool->currentAllocation,
-			atomic_load(&pool->referenceCount));
+			atomic_load(&((FolioPool *)pool)->referenceCount));
 
 	return str;
 }

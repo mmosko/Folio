@@ -24,9 +24,10 @@ export TESTDIR := ../test
 export COVERDIR := $(TOPDIR)/coverage
 
 # The root directory holding lib/liblongBow* and include/LongBow
-export LONGBOW_DIR := /usr/local
+LONGBOW_DIR ?= /usr/local
+export LONGBOW_DIR
 
-all: lib examples test
+all: builddir lib examples test
 
 ###########
 # Make sure we can find longbow

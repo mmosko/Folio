@@ -36,9 +36,9 @@ typedef struct mockup_stats {
 } MockUpStats;
 
 
-const FolioMemoryProvider MockupProviderTemplate = { 0 };
+static const FolioMemoryProvider MockupProviderTemplate;
 
-const size_t mockup_memory = 256;
+static const size_t mockup_memory = 256;
 
 /* **************************************** */
 

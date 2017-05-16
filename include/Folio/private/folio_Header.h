@@ -51,7 +51,7 @@
  * | sizeof(FolioHeader) | providerHeaderLength | guardLength |
  * | ................ aligned ((sizeof(void *))) ............ |
  */
-typedef struct __attribute__((__packed__)) folio_header {
+typedef struct folio_header {
 	uint32_t xmagic1;
 	atomic_int xreferenceCount;
 
@@ -70,6 +70,8 @@ typedef struct __attribute__((__packed__)) folio_header {
 	// will happen when the refcount is 0, which is normally an invalid state except
 	// if this flag is set.
 	bool xinFinalizer;
+
+	uint8_t pad[7];
 
 	uint32_t xmagic2;
 } FolioHeader;

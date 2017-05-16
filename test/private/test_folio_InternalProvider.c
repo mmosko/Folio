@@ -136,7 +136,7 @@ LONGBOW_TEST_CASE(Global, folioInternalProvider_Create_NoState)
 	FolioPool *pool = folioPool_GetFromProvider(provider);
 	assertTrue(pool == provider->poolState, "wrong pool expected %p got %p", (void *) provider->poolState, pool);
 
-	size_t expectedHeaderGuardLength = sizeof(void *);
+	size_t expectedHeaderGuardLength = 7;
 
 	assertTrue(pool->headerGuardLength == expectedHeaderGuardLength, "Wrong header guard length expected %zu got %u",
 			expectedHeaderGuardLength, pool->headerGuardLength);
@@ -169,7 +169,7 @@ LONGBOW_TEST_CASE(Global, folioInternalProvider_Create_WithState)
 	FolioPool *pool = folioPool_GetFromProvider(provider);
 	assertTrue(pool == provider->poolState, "wrong pool expected %p got %p", (void *) provider->poolState, pool);
 
-	size_t expectedHeaderGuardLength = sizeof(void *);
+	size_t expectedHeaderGuardLength = 7;
 
 	assertTrue(pool->headerGuardLength == expectedHeaderGuardLength, "Wrong header guard length expected %zu got %u",
 			expectedHeaderGuardLength, pool->headerGuardLength);

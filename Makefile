@@ -46,6 +46,7 @@ lib : builddir longbow
 	$(MAKE) -C src all
 
 lib_clean:
+	rm -rf build
 	$(MAKE) -C src clean
 
 builddir:

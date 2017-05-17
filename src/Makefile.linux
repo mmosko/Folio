@@ -8,6 +8,7 @@ TARGET := lib$(NAME).so
 TARGET_MAJ := $(TARGET).$(MAJOR)
 TARGET_VER := $(TARGET).$(VERSION)
 
+CFLAGS += -rdynamic
 
 $(BUILDDIR)/$(TARGET): $(BUILDDIR)/$(TARGET_VER)
 	ldconfig -v -n -r $(BUILDDIR) .

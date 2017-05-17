@@ -87,6 +87,8 @@ struct aligned_header {
 #define GuardPattern 0xE0
 #define GuardLength (sizeof(struct aligned_header) - sizeof(FolioHeader))
 
+#ifndef FOLIO_UNITTEST
+
 // Allocate the memory for the default static provider
 static StaticStorage _storage = {
 		.pool = {
@@ -130,6 +132,54 @@ FolioMemoryProvider FolioStdProvider = {
 		.unlock = _unlock,
 		.poolState = &_storage,
 };
+
+#else
+
+// Allocate the memory for the default static provider
+static StaticStorage _TEST_storage = {
+		.pool = {
+				.internalMagic1 = _internalMagic,
+				.headerMagic = StdHeaderMagic,
+				.providerStateLength = sizeof(_Stats),
+				.providerHeaderLength = 0,
+				.headerGuardLength = GuardLength,
+				.headerAlignedLength = sizeof(struct aligned_header),
+				.trailerAlignedLength = sizeof(FolioTrailer),
+				.guardPattern = GuardPattern,
+				.allocationLock = ATOMIC_FLAG_INIT,
+				.poolSize = SIZE_MAX,
+				.currentAllocation = ATOMIC_VAR_INIT(0),
+				.referenceCount = ATOMIC_VAR_INIT(1),
+				.internalMagic2 = _internalMagic
+		},
+		.stats = {
+				.lock = ATOMIC_FLAG_INIT,
+				.outstandingAllocs = 0,
+				.outstandingAcquires = 0,
+				.outOfMemoryCount = 0
+		}
+};
+
+FolioMemoryProvider _TEST_FolioStdProvider = {
+		.acquireProvider = _acquireProvider,
+		.releaseProvider = _releaseProvider,
+		.allocate = _allocate,
+		.allocateAndZero = _allocateAndZero,
+		.acquire = _acquire,
+		.length = _length,
+		.release = _release,
+		.report = _report,
+		.display = _display,
+		.validate = _validate,
+		.acquireCount = _acquireCount,
+		.allocationSize = _allocationSize,
+		.setAvailableMemory = _setAvailableMemory,
+		.lock = _lock,
+		.unlock = _unlock,
+		.poolState = &_TEST_storage,
+};
+
+#endif
 
 /* ********************************************************** */
 

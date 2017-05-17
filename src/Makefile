@@ -14,7 +14,7 @@ MAJOR := 0
 MINOR := 1
 NAME := folio
 
-CFLAGS       = -std=gnu11 -g -O0 -rdynamic -fPIC -Wall -Wextra -I$(INCLUDEDIR) -I$(LONGBOW_DIR)/include
+CFLAGS       = -std=gnu11 -g -O0 -fPIC -Wall -Wextra -I$(INCLUDEDIR) -I$(LONGBOW_DIR)/include
 LDFLAGS      = -rdynamic 
 LIBS         = -L$(BUILDDIR) -L$(LONGBOW_DIR)/lib -llongbow -llongbow-ansiterm
  

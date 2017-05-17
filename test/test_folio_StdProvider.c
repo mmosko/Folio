@@ -27,7 +27,13 @@
 // The source file being tested
 #include <LongBow/unit-test.h>
 
+// Avoid instantiating a second copy of global variables
+// This will cause _storage and FolioStdProvider to be named
+// TEST_FOLIO_STDPROVIDER__storage and TEST_FOLIO_STDPROVIDER_FolioStdProvider
+#define FOLIO_UNITTEST TEST_FOLIO_STDPROVIDER
+
 #include "../src/folio_StdProvider.c"
+
 #include <Folio/folio.h>
 
 LONGBOW_TEST_RUNNER(folio_StdProvider)
